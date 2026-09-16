@@ -40,6 +40,7 @@ try {
     assert.equal(r.sessionId, id); assert.equal(r.model, 'gpt-fixture-b');
     assert.equal(r.usage.pricingKnown, false); assert.deepEqual(r.usage.unpricedModels, ['gpt-fixture-a', 'gpt-fixture-b']);
     assert.equal(r.usage.costUsd, 0); assert.equal(r.usage.limits.primary.used_percent, 25);
+    assert.equal(r.usage.limitsObservedAt, '2026-01-01T12:00:05.000Z');
   });
   test('chat, final answer and end-turn status are exposed', () => {
     const r = readCodexTranscript(file, { withMessages: true });

@@ -12,6 +12,7 @@
 import { h, replace, qs } from '../lib/dom.js';
 import * as f from '../lib/format.js';
 import { store, getUsage, getAgents, getConfig, isLoaded, getLoadError } from '../lib/store.js';
+import { limitObservation, limitPercent, comparisonModelLabel } from '../lib/limits.js';
 
 const PLAN_BASIS = 'API-equivalent estimate; not a subscription charge';
 const API_BASIS = 'API cost estimate from configured prices';
@@ -69,6 +70,7 @@ function signature(u, agents) {
     c.running, c.blocked, c.done, c.failed, c.stopped, c.idle, c.queued, c.paused, c.total,
     u.currentRun && u.currentRun.startedAt, (u.savings && u.savings.savedUsd), tiers,
     JSON.stringify(u.limits || {}), u.pricingComplete, JSON.stringify(u.unpricedModels || []), JSON.stringify(u.byTier || {}),
+    JSON.stringify(getConfig()?.pricing || {}),
   ].join('|');
 }
 
@@ -434,7 +436,7 @@ function tokenPlate(tk) {
 
 function limitPlate(limits) {
   const extra = Object.entries(limits).filter(([k]) => !['claude', 'codex', 'deepseek'].includes(k));
-  return plate('Limits & resets', 'as reported by the server', [
+  return plate('Limits & resets', 'latest CLI observations · account-wide, not per agent', [
     limitPanel('Claude plan limits', limits.claude, 'w-8'),
     limitPanel('Codex plan limits', limits.codex, 'w-8'),
     limitPanel('DeepSeek limits', limits.deepseek, 'w-8'),
@@ -448,23 +450,29 @@ function limitPanel(label, lim, width) {
       na: true, sub: 'the server reported no limit block for this runtime',
     });
   }
-  const rows = Object.entries(lim).filter(([k]) => k !== 'note');
-  const headline = lim.note || lim.resetsAt || lim.reset || (rows.length ? 'see below' : 'no detail');
-  return panel(width, label, [null, String(headline), null], {
-    na: true,
-    viz: rows.length
-      ? h('div', { class: 'spec' }, rows.map(([k, v]) => h('div', { class: 'spec-row' },
-          h('span', null, k),
-          h('span', null, typeof v === 'object' && v !== null ? f.compactJson(v, 60) : String(v)))))
-      : null,
+  const observation = limitObservation(lim);
+  const measured = observation.windows.filter(w => w.remaining !== null);
+  const tightest = measured.length ? measured.reduce((a, b) => a.remaining <= b.remaining ? a : b) : null;
+  const detail = (key, value) => h('div', { class: 'spec-row' },
+    h('span', null, key), h('span', { style: { whiteSpace: 'normal', overflow: 'visible', textOverflow: 'clip' } }, value));
+  return panel(width, label, [null, tightest ? limitPercent(tightest.remaining) : 'not reported', tightest ? 'remaining' : null], {
+    na: !tightest,
+    tone: tightest && tightest.remaining <= 10 ? 'blocked' : null,
+    sub: tightest ? `${tightest.label} · ${limitPercent(tightest.used)} used` : observation.note || 'the CLI has not reported a usage percentage',
+    viz: observation.windows.length ? h('div', { class: 'spec' }, observation.windows.map(w => h('div', { class: 'limit-window' },
+      detail(w.label, w.used === null ? 'Usage not reported' : `${limitPercent(w.used)} used · ${limitPercent(w.remaining)} remaining`),
+      w.used === null ? null : meter(w.used / 100, w.remaining <= 10 ? 'blocked' : 'quiet'),
+      detail('Resets', w.resetsAt || 'not reported')))) : null,
+    basis: observation.observedAt ? `Observed ${observation.observedAt} · may have changed since` : 'Observation time not reported · this is not a live limit check',
   });
 }
 
 /* ---------------------------------------------------------------- savings */
 
 function savingsPlate(sav) {
+  const comparisonModel = comparisonModelLabel(getConfig());
   if (!sav) {
-    return plate('Savings', 'what the delegated work would have cost at the top tier', [
+    return plate('Savings estimate', `comparison model: ${comparisonModel}`, [
       panel('w-24', 'Saved by delegating to DeepSeek', [null, 'not reported', null], {
         na: true, badge: h('span', { class: 'badge badge-est' }, 'estimated'),
         sub: 'the server reported no savings block',
@@ -479,7 +487,7 @@ function savingsPlate(sav) {
     : (equiv > 0 ? 'no DeepSeek cost estimate recorded yet' : 'no DeepSeek work has run yet');
 
   const compare = h('div', { class: 'panel w-16' },
-    h('div', { class: 'panel-title' }, 'DeepSeek estimate vs the same work on Fable',
+    h('div', { class: 'panel-title' }, `DeepSeek estimate vs the same work on ${comparisonModel}`,
       h('span', { class: 'badge badge-est' }, 'estimated')),
     h('div', { class: 'cmp' },
       h('div', null,
@@ -489,12 +497,12 @@ function savingsPlate(sav) {
         h('div', { class: 'cmp-bar' }, h('div', { class: 'cmp-fill', dataset: { tone: 'done' }, style: { width: ((actual / max) * 100).toFixed(2) + '%' } }))),
       h('div', null,
         h('div', { class: 'cmp-top' },
-          h('span', { class: 'cmp-name' }, 'Same work on Fable — API-equivalent'),
+          h('span', { class: 'cmp-name' }, `Same work on ${comparisonModel} — API-equivalent estimate`),
           h('span', { class: 'cmp-val' }, f.usd(equiv))),
         h('div', { class: 'cmp-bar' }, h('div', { class: 'cmp-fill', style: { width: ((equiv / max) * 100).toFixed(2) + '%' } })))),
-    h('div', { class: 'basis' }, 'DeepSeek usage re-priced at the Fable price sheet. Both sides are estimates from configured prices.'));
+    h('div', { class: 'basis' }, `DeepSeek usage re-priced at the ${comparisonModel} price sheet. Both sides are estimates from configured prices.`));
 
-  return plate('Savings', 'what the delegated work would have cost at the top tier', [
+  return plate('Savings estimate', `comparison model: ${comparisonModel}`, [
     panel('w-8', 'Saved by delegating to DeepSeek', money(sav.savedUsd), {
       badge: h('span', { class: 'badge badge-est' }, 'estimated'),
       sub: ratio,

@@ -82,7 +82,7 @@ export function readCodexTranscript(file, { withMessages = false } = {}) {
       out.model = p.model || out.model;
     } else if (e.type === 'event_msg') {
       if (p.type === 'token_count') {
-        if (p.rate_limits) out.usage.limits = p.rate_limits;
+        if (p.rate_limits) { out.usage.limits = p.rate_limits; out.usage.limitsObservedAt = e.timestamp || null; }
         const t = p.info?.total_token_usage;
         if (!t) continue;
         const input = number(t.input_tokens), cached = Math.min(input, number(t.cached_input_tokens));
