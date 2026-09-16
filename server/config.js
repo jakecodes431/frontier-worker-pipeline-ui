@@ -143,7 +143,7 @@ export function localDay(d = new Date()) {
 
 export function publicConfig() {
   return {
-    runtimes: Object.fromEntries(Object.entries(config.runtimes).map(([k, v]) => [k, { label: v.label, defaults: v.defaults, efforts: v.efforts }])),
+    runtimes: Object.fromEntries(Object.entries(config.runtimes).map(([k, v]) => [k, { label: v.label, defaults: v.defaults, efforts: v.efforts, models: v.models }])),
     defaultRuntime: config.frontierRuntime || (config.runtimes.codex ? 'codex' : 'claude'),
     pricing,
     crBin: CR_BIN,

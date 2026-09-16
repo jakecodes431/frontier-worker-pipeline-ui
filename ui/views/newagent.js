@@ -12,8 +12,44 @@ import { getAgents, getConfig, upsertAgent, select, treeOrder } from '../lib/sto
 
 const FALLBACK_RUNTIMES = ['claude', 'codex', 'deepseek', 'external'];
 const EFFORTS_BY_RUNTIME = { claude: ['low', 'medium', 'high', 'max'], codex: ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'], deepseek: ['low', 'medium', 'high'] };
+// The fallback model lists, same values as config/runtimes.json. The codex ids
+// are the ones pricing.json already names; nothing here is invented.
+const MODELS_BY_RUNTIME = {
+  claude: ['claude-opus-5', 'claude-fable-5-1', 'claude-sonnet-5', 'claude-haiku-4-5-20251001'],
+  deepseek: ['deepseek-flash'],
+  codex: ['gpt-6-astra', 'gpt-reserve'],
+};
 export function runtimeNames(cfg = {}) { return Object.keys(cfg.runtimes || {}).length ? Object.keys(cfg.runtimes) : FALLBACK_RUNTIMES; }
 export function runtimeEfforts(cfg, runtime) { return cfg.runtimes?.[runtime]?.efforts || EFFORTS_BY_RUNTIME[runtime] || []; }
+export function runtimeModels(cfg, runtime) { return cfg.runtimes?.[runtime]?.models || MODELS_BY_RUNTIME[runtime] || []; }
+
+/** The model option that reveals the free-text input; never a real model id. */
+export const CUSTOM_MODEL = '__custom__';
+
+/**
+ * The model options for one runtime, in the order both forms show them: the
+ * runtime default with value '' (labelled with the configured default model
+ * when there is one), the runtime's listed models, then Custom… . An empty
+ * model list still yields Default + Custom…, so any id stays reachable.
+ */
+export function modelOptions(cfg, runtime) {
+  const defaults = cfg.runtimes?.[runtime]?.defaults || {};
+  return [
+    { value: '', label: defaults.model ? `Default (${defaults.model})` : 'CLI default' },
+    ...runtimeModels(cfg, runtime).map((value) => ({ value, label: value })),
+    { value: CUSTOM_MODEL, label: 'Custom…' },
+  ];
+}
+
+/**
+ * The model to submit: the typed text when Custom… is selected, otherwise the
+ * chosen option. An empty result means "no model key at all", exactly as an
+ * empty text box behaved before.
+ */
+export function chosenModel(value, customText) {
+  return value === CUSTOM_MODEL ? String(customText ?? '').trim() : String(value ?? '');
+}
+
 export function continuationProvider(agent, providers) {
   const source = agent.runtime === 'external' ? agent.transcriptRuntime : agent.runtime;
   return providers.find((runtime) => runtime !== source) || providers[0];
@@ -210,7 +246,15 @@ function openForm() {
   const role = field('Role', h('select', { name: 'role', class: 'select' }, ...ROLES.map((r) => h('option', { value: r }, r))));
   const runtime = field('Runtime', h('select', { name: 'runtime', class: 'select' }, ...runtimeNames(cfg).map((r) => h('option', { value: r }, cfg.runtimes?.[r]?.label || r))),
     'Claude, Codex and DeepSeek launch local CLI processes. External registers an existing session.');
-  const model = field('Model', h('input', { type: 'text', name: 'model', placeholder: cfg.defaultModel || 'runtime default', autocomplete: 'off' }));
+  const modelSelect = h('select', { name: 'model', class: 'select', style: { flex: '1 1 auto', minWidth: '0' } });
+  // Revealed only by the Custom… option: the dropdown covers the common cases,
+  // and this keeps any model id typeable.
+  const modelCustom = h('input', {
+    type: 'text', name: 'modelCustom', autocomplete: 'off', hidden: true,
+    placeholder: 'any model id', 'aria-label': 'Custom model id',
+    style: { flex: '1 1 auto', minWidth: '0' },
+  });
+  const model = field('Model', modelSelect, 'The runtime default, a listed model, or Custom… to type any model id.', false, false, modelCustom);
   const effort = field('Effort', h('select', { name: 'effort', class: 'select' }));
   const provider = field('Session provider', h('select', { name: 'transcriptRuntime', class: 'select' }, h('option', { value: 'claude' }, 'Claude'), h('option', { value: 'codex' }, 'Codex')));
   const session = field('Session ID', h('input', { name: 'sessionId', type: 'text', autocomplete: 'off', placeholder: 'Existing CLI session ID' }), 'Links the existing local transcript and usage. External sessions do not have a terminal here.', true);
@@ -252,8 +296,12 @@ function openForm() {
     const rt = runtime.input.value;
     const external = rt === 'external';
     const defaults = cfg.runtimes?.[rt]?.defaults || {};
-    model.input.value = '';
-    model.input.placeholder = defaults.model || 'runtime default';
+    clear(modelSelect);
+    modelSelect.append(...modelOptions(cfg, rt).map((o) => h('option', { value: o.value }, o.label)));
+    modelSelect.value = '';
+    modelCustom.value = '';
+    modelCustom.hidden = true;
+    model.el.hidden = external;
     clear(effort.input);
     effort.input.append(h('option', { value: '' }, defaults.effort ? `default (${defaults.effort})` : '— default —'), ...runtimeEfforts(cfg, rt).map((v) => h('option', { value: v }, v)));
     effort.el.hidden = external || !runtimeEfforts(cfg, rt).length;
@@ -262,6 +310,14 @@ function openForm() {
     repo.input.disabled = branch.input.disabled = external;
   }
   runtime.input.addEventListener('change', syncRuntime);
+  // Custom… reveals the free-text input; anything else hides and clears it, so
+  // a submitted Custom value can never linger behind a different choice.
+  modelSelect.addEventListener('change', () => {
+    const custom = modelSelect.value === CUSTOM_MODEL;
+    modelCustom.hidden = !custom;
+    if (custom) modelCustom.focus();
+    else modelCustom.value = '';
+  });
   syncRuntime();
   role.input.addEventListener('change', () => {
     const wanted = role.input.value === 'worker' ? 'deepseek' : cfg.defaultRuntime || 'codex';
@@ -408,7 +464,8 @@ function openForm() {
     };
     if (cwd.input.value.trim()) payload.cwd = cwd.input.value.trim();
     if (parentSel.input.value) payload.parentId = parentSel.input.value;
-    if (model.input.value.trim()) payload.model = model.input.value.trim();
+    const modelId = chosenModel(modelSelect.value, modelCustom.value);
+    if (!model.el.hidden && modelId) payload.model = modelId;
     if (!effort.el.hidden && effort.input.value) payload.effort = effort.input.value;
     if (runtime.input.value === 'external') {
       payload.transcriptRuntime = provider.input.value;
@@ -517,17 +574,30 @@ export function openHandoff(agent, { live } = {}) {
   const submitState = handoffSubmitState(agent, { live });
   const providers = runtimeNames(cfg).filter((r) => ['claude', 'codex'].includes(r));
 
-  // Provider and effort are real listbox popups (ui/lib/dropdown.js) so they
-  // read as the modal's own controls and still carry the full keyboard
-  // contract. The provider change rebuilds the effort list, exactly as the
-  // new-agent form does for its runtimes.
+  // Provider, model and effort are real listbox popups (ui/lib/dropdown.js) so
+  // they read as the modal's own controls and still carry the full keyboard
+  // contract. The provider change rebuilds the model and effort lists, exactly
+  // as the new-agent form does for its runtimes.
   const runtime = createDropdown({
     options: providers.map((r) => ({ value: r, label: cfg.runtimes?.[r]?.label || r })),
     value: continuationProvider(agent, providers),
     ariaLabel: 'Continue with',
     onChange: () => sync(),
   });
-  const modelInput = h('input', { name: 'model', type: 'text', autocomplete: 'off' });
+  // Custom… reveals this text input so any model id stays typeable.
+  const modelCustom = h('input', {
+    name: 'modelCustom', type: 'text', autocomplete: 'off', hidden: true,
+    placeholder: 'any model id', 'aria-label': 'Custom model id',
+  });
+  const model = createDropdown({
+    options: [], value: '', ariaLabel: 'Model',
+    onChange: (value) => {
+      const custom = value === CUSTOM_MODEL;
+      modelCustom.hidden = !custom;
+      if (custom) modelCustom.focus();
+      else modelCustom.value = '';
+    },
+  });
   const effort = createDropdown({ options: [], value: '', ariaLabel: 'Effort' });
 
   const start = h('input', { type: 'checkbox', id: 'handoff-start' });
@@ -547,17 +617,22 @@ export function openHandoff(agent, { live } = {}) {
     submit.setAttribute('aria-describedby', noticeId);
   }
 
-  /** Point the model default and the effort list at the chosen provider. */
+  /** Point the model list and the effort list at the chosen provider. */
   function sync() {
     const defaults = cfg.runtimes?.[runtime.value]?.defaults || {};
-    modelInput.value = '';
-    modelInput.placeholder = defaults.model || 'runtime default';
+    model.setOptions(modelOptions(cfg, runtime.value), '');
+    modelCustom.value = '';
+    modelCustom.hidden = true;
+    modelCustom.placeholder = defaults.model ? `${defaults.model} or any model id` : 'any model id';
     effort.setOptions([
       { value: '', label: '— default —' },
       ...runtimeEfforts(cfg, runtime.value).map((v) => ({ value: v, label: v })),
     ], '');
   }
   sync();
+  const modelField = labelledField('Model', model);
+  // The Custom… input sits under the popup, inside the same labelled field.
+  modelField.el.appendChild(modelCustom);
 
   const formId = 'handoff-form';
   const form = h('form', {
@@ -571,7 +646,7 @@ export function openHandoff(agent, { live } = {}) {
     error,
     h('div', { class: 'form-grid' },
       labelledField('Continue with', runtime).el,
-      labelledField('Model', modelInput).el,
+      modelField.el,
       labelledField('Effort', effort).el),
     h('div', { class: 'field field-full' },
       h('label', { class: 'check-label handoff-check', for: start.id },
@@ -603,7 +678,7 @@ export function openHandoff(agent, { live } = {}) {
     error.hidden = true;
     const payload = handoffPayload({
       runtime: runtime.value,
-      model: modelInput.value.trim(),
+      model: chosenModel(model.value, modelCustom.value),
       effort: effort.value,
       autoStart: start.checked,
     });

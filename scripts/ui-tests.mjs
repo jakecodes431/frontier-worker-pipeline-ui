@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { usageCost, tokens } from '../ui/lib/format.js';
-import { runtimeNames, runtimeEfforts, continuationProvider, handoffButtonState, agentIsLive, handoffSubmitState, handoffPayload, LIVE_HANDOFF_NOTICE } from '../ui/views/newagent.js';
+import { runtimeNames, runtimeEfforts, runtimeModels, modelOptions, chosenModel, CUSTOM_MODEL, continuationProvider, handoffButtonState, agentIsLive, handoffSubmitState, handoffPayload, LIVE_HANDOFF_NOTICE } from '../ui/views/newagent.js';
 import { handoffButtonState as panelHandoffButtonState } from '../ui/views/panel.js';
 import { nextActiveIndex, typeaheadIndex, closeOpenDropdown } from '../ui/lib/dropdown.js';
 import { ctoAgent } from '../ui/views/cto.js';
@@ -15,11 +15,40 @@ assert.equal(usageCost({}), 'not available');
 assert.equal(tokens(undefined), 'not available');
 assert.equal(tokens(0), '0');
 
-const config = { runtimes: { codex: { efforts: ['low', 'xhigh'] }, external: {} } };
+const config = { runtimes: { codex: { efforts: ['low', 'xhigh'], models: ['gpt-6-astra', 'gpt-reserve'] }, external: {} } };
 assert.deepEqual(runtimeNames(config), ['codex', 'external']);
 assert.deepEqual(runtimeEfforts(config, 'codex'), ['low', 'xhigh']);
 assert.deepEqual(runtimeEfforts(config, 'external'), []);
 assert.ok(runtimeNames().includes('codex'));
+
+// Models mirror efforts: the config list wins, a runtime with no config entry
+// falls back to MODELS_BY_RUNTIME, and external has none.
+assert.deepEqual(runtimeModels(config, 'codex'), ['gpt-6-astra', 'gpt-reserve']);
+assert.deepEqual(runtimeModels(config, 'external'), []);
+assert.deepEqual(runtimeModels({}, 'claude'), ['claude-opus-5', 'claude-fable-5-1', 'claude-sonnet-5', 'claude-haiku-4-5-20251001']);
+assert.deepEqual(runtimeModels({}, 'deepseek'), ['deepseek-flash']);
+assert.deepEqual(runtimeModels({}, 'codex'), ['gpt-6-astra', 'gpt-reserve']);
+assert.deepEqual(runtimeModels({ runtimes: { codex: { models: [] } } }, 'codex'), [], 'an explicit empty list means no named models');
+
+// The dropdown's order: default (''), the listed models, then Custom… — and
+// the default option is labelled with the runtime default when there is one.
+const codexModels = modelOptions(config, 'codex');
+assert.equal(codexModels[0].value, '', 'the default option carries the empty value');
+assert.deepEqual(codexModels.map((o) => o.value), ['', 'gpt-6-astra', 'gpt-reserve', CUSTOM_MODEL]);
+assert.equal(codexModels.at(-1).label, 'Custom…');
+assert.equal(modelOptions({}, 'claude')[0].label, 'CLI default');
+assert.equal(modelOptions({ runtimes: { deepseek: { defaults: { model: 'deepseek-flash' } } } }, 'deepseek')[0].label, 'Default (deepseek-flash)');
+assert.equal(modelOptions(config, 'external').length, 2, 'external still offers Default + Custom…');
+
+// Custom… maps to the typed value; anything else submits the selected value,
+// and an empty choice stays empty so no `model` key is sent.
+assert.equal(chosenModel('', 'ignored'), '');
+assert.equal(chosenModel('gpt-6-astra', 'ignored'), 'gpt-6-astra');
+assert.equal(chosenModel(CUSTOM_MODEL, '  my-model-v9  '), 'my-model-v9');
+assert.equal(chosenModel(CUSTOM_MODEL, '   '), '', 'a blank Custom value sends no model');
+const noModel = handoffPayload({ runtime: 'codex', model: chosenModel('', ''), effort: '', autoStart: false });
+assert.deepEqual(noModel, { runtime: 'codex', autoStart: false });
+
 assert.equal(continuationProvider({ runtime: 'codex', transcriptRuntime: 'claude' }, ['claude', 'codex']), 'claude');
 assert.equal(continuationProvider({ runtime: 'external', transcriptRuntime: 'codex' }, ['claude', 'codex']), 'claude');
 assert.equal(continuationProvider({ runtime: 'claude' }, ['claude', 'codex']), 'codex');
@@ -154,6 +183,14 @@ assert.match(handoffSrc, /handoffSubmitState\(/, 'the modal must consult the liv
 assert.match(handoffSrc, /submit\.disabled = true/, 'the live modal must visibly disable submit');
 assert.match(handoffSrc, /handoffPayload\(/, 'the modal must build the contract payload');
 assert.match(handoffSrc, /setText\(error, err && err\.message/, 'the server 409 must be surfaced verbatim');
+assert.match(handoffSrc, /modelOptions\(/, 'the continuation form must rebuild its model list per runtime');
+assert.match(handoffSrc, /chosenModel\(/, 'the continuation form must resolve Default/Custom through the pure rule');
+
+// Both forms must go through the same model rule, and the no-model-key rule is
+// that an empty choice is simply not added to the payload.
+assert.match(newagentSrc, /modelOptions\(/, 'the New agent form must offer the per-runtime model list');
+assert.match(newagentSrc, /chosenModel\(modelSelect\.value, modelCustom\.value\)/, 'the New agent form must resolve Default/Custom through the pure rule');
+assert.match(newagentSrc, /if \(!model\.el\.hidden && modelId\) payload\.model = modelId/, 'an empty/Default choice must send no model key');
 
 // The panel's Choose LLM wiring is equally action-free; the Stop control lives
 // in the Extra tab and is a separate code path.

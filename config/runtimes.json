@@ -64,6 +64,12 @@
         "high",
         "xhigh",
         "max"
+      ],
+      "models": [
+        "claude-opus-5",
+        "claude-fable-5-1",
+        "claude-sonnet-5",
+        "claude-haiku-4-5-20251001"
       ]
     },
     "deepseek": {
@@ -93,6 +99,9 @@
         "effort": "n/a",
         "permissionMode": "workspace-write"
       },
+      "models": [
+        "deepseek-flash"
+      ],
       "sessionStore": "${DSH_HOME:-~/.dsh}/storages/session_projcache/sessions",
       "oneShot": true
     },
@@ -144,6 +153,10 @@
         "xhigh",
         "max",
         "ultra"
+      ],
+      "models": [
+        "gpt-6-astra",
+        "gpt-reserve"
       ],
       "transcriptRoot": "${CODEX_HOME:-~/.codex}/sessions",
       "idleAfterSilenceMs": 20000,
