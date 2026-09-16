@@ -173,7 +173,8 @@ function renderRailSummary() {
   const activeCell = sideActive.parentElement;
   if (activeCell) activeCell.dataset.live = active > 0 ? '1' : '0';
   setText(sideDone, String(done));
-  setText(sideSpend, u.spend ? f.usd(u.spend.today) : '—');
+  setText(sideSpend, u.spend ? f.usd(u.spend.today) + (u.pricingComplete === false ? '*' : '') : '—');
+  sideSpend.title = u.pricingComplete === false ? 'Partial estimate: unpriced models are excluded' : 'Today’s API-equivalent cost';
   setText(sideTokens, u.tokens ? f.tokens(u.tokens.total) : '—');
   setText(navCount, agents.length ? String(agents.length) : '');
   const cfg = store.getConfig();

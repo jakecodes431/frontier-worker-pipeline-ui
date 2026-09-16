@@ -468,9 +468,9 @@ function updateRow(row, agent, byId) {
 
   applyElapsed(p.elapsedEl, agent);
   const u = agent.usage || {};
-  setText(p.tokensEl, u.totalTokens ? f.tokens(u.totalTokens) : '—');
+  setText(p.tokensEl, f.tokens(u.totalTokens));
   setAttr(p.tokensEl, 'title', `in ${f.tokens(u.inputTokens || 0)} · cache r ${f.tokens(u.cacheReadTokens || 0)} · cache w ${f.tokens(u.cacheWriteTokens || 0)} · out ${f.tokens(u.outputTokens || 0)}`);
-  setText(p.costEl, u.costUsd != null ? f.usd(u.costUsd) : '—');
+  setText(p.costEl, f.usageCost(u));
 }
 
 function buildNeedsRow(agent) {
@@ -641,8 +641,8 @@ function updateCard(card, agent, byId) {
   }
   applyElapsed(p.elapsed, agent);
   const u = agent.usage || {};
-  setText(p.tokens, u.totalTokens ? f.tokens(u.totalTokens) : '—');
-  setText(p.cost, u.costUsd != null ? f.usd(u.costUsd) : '—');
+  setText(p.tokens, f.tokens(u.totalTokens));
+  setText(p.cost, f.usageCost(u));
 }
 
 /* ================================================================ shared */

@@ -15,7 +15,7 @@ import { h, replace, qs } from '../lib/dom.js';
 import * as f from '../lib/format.js';
 import { store, getUsage, getAgents, getConfig, isLoaded, getLoadError } from '../lib/store.js';
 
-const PLAN_BASIS = 'API-equivalent · on plan (estimate)';
+const PLAN_BASIS = 'API-equivalent estimate; not a subscription charge';
 const ACTUAL_BASIS = 'actual API cost';
 
 let root = null;
@@ -70,7 +70,7 @@ function signature(u, agents) {
     agents.length, t.total, t.input, t.output, s.today, s.week, s.month,
     c.running, c.blocked, c.done, c.failed, c.stopped, c.idle, c.queued, c.paused, c.total,
     u.currentRun && u.currentRun.startedAt, (u.savings && u.savings.savedUsd), tiers,
-    JSON.stringify(u.limits || {}),
+    JSON.stringify(u.limits || {}), u.pricingComplete, JSON.stringify(u.unpricedModels || []), JSON.stringify(u.byTier || {}),
   ].join('|');
 }
 
@@ -199,7 +199,7 @@ function render() {
       h('h1', { class: 'page-title' }, 'What the fleet is spending and doing'),
       h('div', { class: 'page-sub' },
         `${agents.length} agent${agents.length === 1 ? '' : 's'} tracked · ${running} running · updated ${f.clock(new Date().toISOString())}. `,
-        'Claude dollars are API-equivalent estimates priced from token counts — those sessions run on the Claude plan and are never billed per token. DeepSeek dollars are real, metered API spend.')),
+        'Claude and Codex costs are API-equivalent estimates, not subscription charges. DeepSeek costs use configured API prices. Unknown model prices are excluded from subtotals.')),
     h('div', { class: 'plates' },
       spendPlate(u),
       tierPlate(u.byTier || {}, u.byTierAgents || {}),
@@ -248,7 +248,7 @@ function firstRun() {
           h('div', { class: 'btn-row' },
             h('button', { class: 'btn btn-primary', type: 'button', onclick: openNewAgent }, 'New agent → runtime "external"'))),
         step(2, 'Or let the control room spawn one',
-          'Pick a role and a working directory and it launches a real CLI in a real terminal — Claude Code for a CTO or orchestrator, the DeepSeek harness for a worker. Point it at a git repo and the worker gets its own worktree and branch.',
+          'Pick a role and a working directory and it launches a real CLI in a real terminal — Claude Code or Codex for a CTO or orchestrator, the DeepSeek harness for a worker. Point it at a git repo and the worker gets its own worktree and branch.',
           h('pre', { class: 'code-inline mono' },
             `node ${bin} spawn --name "docs pass" --role worker \\\n  --runtime deepseek --repo <path-to-repo> --task "one line"`)),
         step(3, 'Then watch it here',
@@ -290,7 +290,7 @@ function spendPlate(u) {
     return p === null ? 'no spend recorded this month' : `${p.toFixed(0)}% of the month to date`;
   };
 
-  return plate('Spend', 'banked on the day it was measured · local calendar days · all tiers combined', [
+  return plate(u.pricingComplete === false ? 'Spend · partial estimate' : 'Spend', u.pricingComplete === false ? `Unpriced models excluded: ${(u.unpricedModels || []).join(', ') || 'price unavailable'}` : 'banked on the day it was measured · local calendar days · all tiers combined', [
     panel('w-6', 'Spend today', money(today), {
       sub: sharePct(today),
       viz: meter(month > 0 ? today / month : 0, 'quiet'),
@@ -310,7 +310,7 @@ function spendPlate(u) {
       ]),
       basis: basisLine('estimate'),
     }),
-    panel('w-6', 'Current run', money(run.costUsd), {
+    panel('w-6', run.pricingKnown === false ? 'Current run · partial estimate' : 'Current run', money(run.costUsd), {
       live: Boolean(run.startedAt),
       sub: run.startedAt
         ? h('span', null, 'running for ', h('span', { class: 'mono', dataset: { runElapsed: run.startedAt } },
@@ -324,8 +324,8 @@ function spendPlate(u) {
 /* ------------------------------------------------------------------ tiers */
 
 const TIERS = [
-  ['cto', 'Claude CTO', 'estimate', 'no agent holds the cto role'],
-  ['orchestrator', 'Claude orchestrators', 'estimate', 'no agent holds the orchestrator role'],
+  ['cto', 'CTO', 'estimate', 'no agent holds the cto role'],
+  ['orchestrator', 'Orchestrators', 'estimate', 'no agent holds the orchestrator role'],
   ['deepseek', 'DeepSeek workers', 'actual', 'nothing has run on the deepseek runtime'],
   // Nothing is allowed to fall out of this list: an agent that is neither a
   // DeepSeek process nor a CTO/orchestrator (a Claude-run worker, an external
@@ -358,7 +358,8 @@ function tierPlate(tiers, tierAgents) {
           basis: basisLine(kind),
         });
       }
-      const cost = Number(t.costUsd) || 0;
+      const cost = t.costUsd;
+      if (t.pricingKnown === false) { badge.textContent = 'partial estimate'; }
       const share = pct(cost, totalCost);
       return panel('w-8', label, money(cost), {
         badge,
@@ -435,10 +436,11 @@ function tokenPlate(tk) {
 /* ----------------------------------------------------------------- limits */
 
 function limitPlate(limits) {
-  const extra = Object.entries(limits).filter(([k]) => k !== 'claude' && k !== 'deepseek');
+  const extra = Object.entries(limits).filter(([k]) => !['claude', 'codex', 'deepseek'].includes(k));
   return plate('Limits & resets', 'as reported by the server', [
-    limitPanel('Claude plan limits', limits.claude, extra.length ? 'w-8' : 'w-12'),
-    limitPanel('DeepSeek limits', limits.deepseek, extra.length ? 'w-8' : 'w-12'),
+    limitPanel('Claude plan limits', limits.claude, 'w-8'),
+    limitPanel('Codex plan limits', limits.codex, 'w-8'),
+    limitPanel('DeepSeek limits', limits.deepseek, 'w-8'),
     extra.map(([k, v]) => limitPanel(k + ' limits', v, 'w-8')),
   ]);
 }

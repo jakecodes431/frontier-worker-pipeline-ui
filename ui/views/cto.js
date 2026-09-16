@@ -31,7 +31,8 @@ const WINDOW = 60;
 const WINDOW_STEP = 60;
 
 export function ctoAgent() {
-  return getAgents().find((a) => a.role === 'cto') || null;
+  const candidates = getAgents().filter((a) => a.role === 'cto' && !a.successorId);
+  return candidates.sort((a, b) => String(b.createdAt || '').localeCompare(String(a.createdAt || '')))[0] || null;
 }
 
 /**
@@ -201,7 +202,9 @@ export function mountCto({ view, badge }) {
     if (id !== agentId) {
       agentId = id;
       transcript = []; messages = []; lastSig = ''; shown = WINDOW;
-      expanded.clear(); queuedIds.clear();
+      expanded.clear(); expandedText.clear(); queuedIds.clear(); pending = null;
+      clear(list);
+      if (id) replace(scroll, h('div', { class: 'loading' }, 'Loading the CTO session…'));
       if (!id) renderNoCto();
       else if (active) refresh();
     }
@@ -265,11 +268,11 @@ export function mountCto({ view, badge }) {
     setText(headChip, a.status || 'queued');
     const u = a.usage || {};
     const elapsed = a.elapsedS != null ? a.elapsedS : f.elapsedSince(a.startedAt || a.createdAt);
-    // An agent that has not reported usage yet reads 0, not "not available".
+    // Missing usage and unknown pricing must remain visibly unknown.
     replace(headStats,
       stat('elapsed', f.duration(elapsed)),
-      stat('tokens', f.tokens(u.totalTokens || 0)),
-      stat('cost', f.usd(u.costUsd || 0)));
+      stat('tokens', f.tokens(u.totalTokens)),
+      stat('cost', f.usageCost(u)));
   }
 
   function stat(label, value) {
@@ -282,11 +285,13 @@ export function mountCto({ view, badge }) {
     if (!agentId) { renderNoCto(); return; }
     if (inflight) return;
     inflight = true;
+    const requestedId = agentId;
     try {
       const [chat, msgs] = await Promise.all([
-        api.chat(agentId).catch((e) => ({ __error: e })),
-        api.messages(agentId).catch(() => []),
+        api.chat(requestedId).catch((e) => ({ __error: e })),
+        api.messages(requestedId).catch(() => []),
       ]);
+      if (requestedId !== agentId) return;
       if (chat && chat.__error) throw chat.__error;
       transcript = Array.isArray(chat && chat.messages) ? chat.messages : [];
       messages = Array.isArray(msgs) ? msgs : (msgs && Array.isArray(msgs.messages) ? msgs.messages : []);

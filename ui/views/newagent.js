@@ -9,9 +9,11 @@ import { h, clear, toast, setText, trapFocus } from '../lib/dom.js';
 import api from '../lib/api.js';
 import { getAgents, getConfig, upsertAgent, select, treeOrder } from '../lib/store.js';
 
-const RUNTIMES = ['claude', 'deepseek', 'external'];
+const FALLBACK_RUNTIMES = ['claude', 'codex', 'deepseek', 'external'];
+const EFFORTS_BY_RUNTIME = { claude: ['low', 'medium', 'high', 'max'], codex: ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'], deepseek: ['low', 'medium', 'high'] };
+export function runtimeNames(cfg = {}) { return Object.keys(cfg.runtimes || {}).length ? Object.keys(cfg.runtimes) : FALLBACK_RUNTIMES; }
+export function runtimeEfforts(cfg, runtime) { return cfg.runtimes?.[runtime]?.efforts || EFFORTS_BY_RUNTIME[runtime] || []; }
 const ROLES = ['cto', 'orchestrator', 'worker'];
-const EFFORTS = ['', 'low', 'medium', 'high', 'max'];
 const NAME_MAX = 200;
 const TASK_MAX = 2000;
 
@@ -49,10 +51,12 @@ function openForm() {
 
   const name = field('Name', h('input', { type: 'text', name: 'name', maxlength: String(NAME_MAX), placeholder: 'tags orchestrator', autocomplete: 'off' }), null, false, true);
   const role = field('Role', h('select', { name: 'role' }, ...ROLES.map((r) => h('option', { value: r }, r))));
-  const runtime = field('Runtime', h('select', { name: 'runtime' }, ...RUNTIMES.map((r) => h('option', { value: r }, r))),
-    'claude and deepseek are spawned as real processes; external only registers a session that is already running.');
+  const runtime = field('Runtime', h('select', { name: 'runtime' }, ...runtimeNames(cfg).map((r) => h('option', { value: r }, cfg.runtimes?.[r]?.label || r))),
+    'Claude, Codex and DeepSeek launch local CLI processes. External registers an existing session.');
   const model = field('Model', h('input', { type: 'text', name: 'model', placeholder: cfg.defaultModel || 'runtime default', autocomplete: 'off' }));
-  const effort = field('Effort', h('select', { name: 'effort' }, ...EFFORTS.map((e) => h('option', { value: e }, e || '— default —'))));
+  const effort = field('Effort', h('select', { name: 'effort' }));
+  const provider = field('Session provider', h('select', { name: 'transcriptRuntime' }, h('option', { value: 'claude' }, 'Claude'), h('option', { value: 'codex' }, 'Codex')));
+  const session = field('Session ID', h('input', { name: 'sessionId', type: 'text', autocomplete: 'off', placeholder: 'Existing CLI session ID' }), 'Links the existing local transcript and usage. External sessions do not have a terminal here.', true);
   const task = field('Task', h('input', { type: 'text', name: 'task', maxlength: String(TASK_MAX), placeholder: 'one-line task', autocomplete: 'off' }), null, true, true);
   const cwd = field('Working directory', h('input', { type: 'text', name: 'cwd', placeholder: cfg.defaultCwd || 'absolute path to the folder the agent runs in', autocomplete: 'off' }),
     'Ignored when a repo is given below: the agent then runs in a fresh worktree of it.', true, true);
@@ -61,7 +65,7 @@ function openForm() {
   const branch = field('Branch', h('input', { type: 'text', name: 'branch', placeholder: 'cr/<name>-<stamp> (optional)', autocomplete: 'off' }));
 
   role.input.value = 'worker';
-  runtime.input.value = 'claude';
+  runtime.input.value = runtimeNames(cfg).includes('deepseek') ? 'deepseek' : runtimeNames(cfg)[0];
 
   const autoStart = h('input', { type: 'checkbox', name: 'autoStart', id: 'na-autostart-' + (++uid) });
   autoStart.checked = true;
@@ -70,7 +74,26 @@ function openForm() {
   const submitBtn = h('button', { class: 'btn btn-primary', type: 'submit' }, 'Create agent');
   const cancelBtn = h('button', { class: 'btn btn-ghost', type: 'button', onclick: closeForm }, 'Cancel');
 
-  const fields = [parentSel, name, role, runtime, model, effort, task, cwd, brief];
+  const fields = [parentSel, name, role, runtime, provider, session, model, effort, task, cwd, brief];
+  function syncRuntime() {
+    const rt = runtime.input.value;
+    const external = rt === 'external';
+    const defaults = cfg.runtimes?.[rt]?.defaults || {};
+    model.input.value = '';
+    model.input.placeholder = defaults.model || 'runtime default';
+    clear(effort.input);
+    effort.input.append(h('option', { value: '' }, defaults.effort ? `default (${defaults.effort})` : '— default —'), ...runtimeEfforts(cfg, rt).map((v) => h('option', { value: v }, v)));
+    effort.el.hidden = external || !runtimeEfforts(cfg, rt).length;
+    provider.el.hidden = session.el.hidden = !external;
+    autoStart.disabled = external;
+    repo.input.disabled = branch.input.disabled = external;
+  }
+  runtime.input.addEventListener('change', syncRuntime);
+  syncRuntime();
+  role.input.addEventListener('change', () => {
+    const wanted = role.input.value === 'worker' ? 'deepseek' : cfg.defaultRuntime || 'codex';
+    if (runtimeNames(cfg).includes(wanted)) { runtime.input.value = wanted; syncRuntime(); }
+  });
 
   const form = h('form', { class: 'modal-body', novalidate: true, id: 'new-agent-form' },
     errEl,
@@ -111,7 +134,7 @@ function openForm() {
     };
     check(name, !name.input.value.trim() ? 'A name is required — it is how you will find this agent in the tree.' : null);
     check(task, !task.input.value.trim() ? 'A one-line task is required.' : null);
-    const needsCwd = !repo.input.value.trim();
+    const needsCwd = runtime.input.value === 'external' || !repo.input.value.trim();
     check(cwd, needsCwd && !cwd.input.value.trim()
       ? 'Give a working directory, or a repo below to create a worktree from.'
       : null);
@@ -139,20 +162,24 @@ function openForm() {
   }
 
   async function submit() {
-    if (!validate()) return;
+    if (submitBtn.disabled || !validate()) return;
     const payload = {
       name: name.input.value.trim(),
       role: role.input.value,
       runtime: runtime.input.value,
       task: task.input.value.trim(),
-      autoStart: autoStart.checked,
+      autoStart: runtime.input.value !== 'external' && autoStart.checked,
     };
     if (cwd.input.value.trim()) payload.cwd = cwd.input.value.trim();
     if (parentSel.input.value) payload.parentId = parentSel.input.value;
     if (model.input.value.trim()) payload.model = model.input.value.trim();
-    if (effort.input.value) payload.effort = effort.input.value;
+    if (!effort.el.hidden && effort.input.value) payload.effort = effort.input.value;
+    if (runtime.input.value === 'external') {
+      payload.transcriptRuntime = provider.input.value;
+      if (session.input.value.trim()) payload.sessionId = session.input.value.trim();
+    }
     if (brief.input.value.trim()) payload.brief = brief.input.value.trim();
-    if (repo.input.value.trim()) {
+    if (runtime.input.value !== 'external' && repo.input.value.trim()) {
       payload.worktree = { repo: repo.input.value.trim() };
       if (branch.input.value.trim()) payload.worktree.branch = branch.input.value.trim();
     }
@@ -221,4 +248,49 @@ function field(label, input, hint, full, required) {
       }
     },
   };
+}
+
+/** A provider change creates a successor; it never rewrites a transcript. */
+export function openHandoff(agent) {
+  if (!modalRoot) return;
+  const cfg = getConfig() || {};
+  const providers = runtimeNames(cfg).filter((r) => ['claude', 'codex'].includes(r));
+  const runtime = field('Continue with', h('select', { name: 'runtime' }, ...providers.map((r) => h('option', { value: r }, cfg.runtimes?.[r]?.label || r))));
+  runtime.input.value = providers.find((r) => r !== (agent.transcriptRuntime || agent.runtime)) || providers[0];
+  const model = field('Model', h('input', { name: 'model', type: 'text', autocomplete: 'off' }));
+  const effort = field('Effort', h('select', { name: 'effort' }));
+  const start = h('input', { type: 'checkbox', id: 'handoff-start' });
+  const error = h('div', { class: 'error-box', role: 'alert', hidden: true });
+  const submit = h('button', { class: 'btn btn-primary', type: 'submit' }, 'Create continuation');
+  const sync = () => {
+    const defaults = cfg.runtimes?.[runtime.input.value]?.defaults || {};
+    model.input.value = '';
+    model.input.placeholder = defaults.model || 'runtime default';
+    clear(effort.input);
+    effort.input.append(h('option', { value: '' }, '— default —'), ...runtimeEfforts(cfg, runtime.input.value).map((v) => h('option', { value: v }, v)));
+  };
+  runtime.input.addEventListener('change', sync); sync();
+  const form = h('form', { class: 'modal-body' },
+    h('p', { class: 'hint' }, `Continue “${agent.name || agent.id}” in a new agent with the same task and working directory. Its recovery brief includes prior reports. The original history stays available. Stop any live terminal first.`),
+    error, h('div', { class: 'form-grid' }, runtime.el, model.el, effort.el),
+    h('label', { class: 'check-label', for: start.id }, start, 'Start the new agent immediately'),
+    h('div', { class: 'modal-foot' }, h('button', { class: 'btn btn-ghost', type: 'button', onclick: closeForm }, 'Cancel'), submit));
+  const modal = h('div', { class: 'modal', role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': 'handoff-title' }, h('div', { class: 'modal-head' }, h('h2', { id: 'handoff-title', class: 'modal-title' }, 'Continue with another provider')), form);
+  form.addEventListener('submit', async (ev) => {
+    ev.preventDefault();
+    if (submit.disabled) return;
+    submit.disabled = true; error.hidden = true;
+    const payload = { runtime: runtime.input.value, autoStart: start.checked };
+    if (model.input.value.trim()) payload.model = model.input.value.trim();
+    if (effort.input.value) payload.effort = effort.input.value;
+    try {
+      const next = await api.handoff(agent.id, payload);
+      if (!next?.id) throw new Error('The server did not return the continuation agent.');
+      upsertAgent(next); closeForm(); select(next.id);
+      toast(start.checked ? 'Continuation started.' : 'Continuation created. Use Restart in Extra when ready.', 'ok');
+    } catch (err) { setText(error, err.message); error.hidden = false; }
+    finally { submit.disabled = false; }
+  });
+  closeForm(); clear(modalRoot); modalRoot.appendChild(modal); modalRoot.hidden = false;
+  releaseTrap = trapFocus(modal, runtime.input);
 }

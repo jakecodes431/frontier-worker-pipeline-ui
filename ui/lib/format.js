@@ -131,3 +131,8 @@ export function compactJson(value, max = 300) {
     return String(value);
   }
 }
+
+/** Unknown model pricing is not a zero-dollar run. */
+export function usageCost(usage = {}) {
+  return usage.pricingKnown === false ? 'Unpriced' : usd(usage.costUsd);
+}

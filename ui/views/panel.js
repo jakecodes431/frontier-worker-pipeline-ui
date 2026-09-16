@@ -13,6 +13,7 @@ import { h, replace, clear, setText, setAttr, toast } from '../lib/dom.js';
 import * as f from '../lib/format.js';
 import api from '../lib/api.js';
 import { store, getAgent, select } from '../lib/store.js';
+import { openHandoff } from './newagent.js';
 import { applyElapsed } from './hierarchy.js';
 
 import { createChatTab } from './tabs/chat.js';
@@ -155,6 +156,7 @@ function buildHead(agent) {
   const subEl = h('div', { class: 'panel-sub' }, '');
   const chipEl = h('span', { class: 'chip' });
   const warnEl = h('div', { class: 'panel-warn', hidden: true, role: 'status' });
+  const continueBtn = h('button', { class: 'btn btn-sm', type: 'button', onclick: () => openHandoff(getAgent(agent.id) || agent) }, 'Continue with…');
   const closeBtn = h('button', { class: 'btn btn-sm btn-ghost panel-close', type: 'button', onclick: () => select(null), title: 'Close (Esc)' }, 'Close');
 
   const tabBtns = new Map();
@@ -171,7 +173,7 @@ function buildHead(agent) {
   const el = h('div', { class: 'panel-head' },
     h('div', { class: 'panel-head-top' },
       h('div', { class: 'panel-ident' }, nameEl, subEl),
-      h('div', { class: 'panel-head-actions' }, chipEl, closeBtn)),
+      h('div', { class: 'panel-head-actions' }, chipEl, continueBtn, closeBtn)),
     warnEl,
     tabsEl);
 
@@ -179,6 +181,9 @@ function buildHead(agent) {
     el,
     focus() { try { nameEl.focus(); } catch { /* ignore */ } },
     update(a) {
+      continueBtn.hidden = !['cto', 'orchestrator'].includes(a.role);
+      continueBtn.disabled = Boolean(a.successorId) || (!['stopped', 'blocked', 'done', 'failed'].includes(a.status) && a.runtime !== 'external');
+      continueBtn.title = a.successorId ? 'This session already has a continuation' : continueBtn.disabled ? 'Stop the current session before continuing with another provider' : 'Create a successor with a recovery brief';
       setText(nameEl, a.name || a.id);
       setAttr(nameEl, 'title', a.name || a.id);
       setText(subEl, [a.role, a.runtime, a.model, a.effort && ('effort: ' + a.effort), a.id]
@@ -354,6 +359,8 @@ function createExtraTab(ctx) {
             }, a.parentId)
           : 'none (root)')),
       ...kv('role', h('dd', null, a.role || '—')),
+      ...kv('continued from', h('dd', null, a.continuedFromId ? h('a', { href: '#', onclick: (ev) => { ev.preventDefault(); select(a.continuedFromId); } }, a.continuedFromId) : '—')),
+      ...kv('continuation', h('dd', null, a.successorId ? h('a', { href: '#', onclick: (ev) => { ev.preventDefault(); select(a.successorId); } }, a.successorId) : '—')),
       ...kv('runtime', h('dd', null, a.runtime || '—')),
       ...kv('model', h('dd', { class: 'mono' }, a.model || '—')),
       ...kv('effort', h('dd', null, a.effort || '—')),
@@ -386,18 +393,18 @@ function createExtraTab(ctx) {
     // usage
     const u = a.usage || {};
     replace(usageEl,
-      ...kv('input', h('dd', { class: 'mono' }, f.tokens(u.inputTokens || 0))),
-      ...kv('cache read', h('dd', { class: 'mono' }, f.tokens(u.cacheReadTokens || 0))),
-      ...kv('cache write', h('dd', { class: 'mono' }, f.tokens(u.cacheWriteTokens || 0))),
-      ...kv('output', h('dd', { class: 'mono' }, f.tokens(u.outputTokens || 0))),
-      ...kv('total', h('dd', { class: 'mono' }, f.tokens(u.totalTokens || 0))),
-      ...kv('cost', h('dd', { class: 'mono' }, f.usd(u.costUsd))),
+      ...kv('input', h('dd', { class: 'mono' }, f.tokens(u.inputTokens))),
+      ...kv('cache read', h('dd', { class: 'mono' }, f.tokens(u.cacheReadTokens))),
+      ...kv('cache write', h('dd', { class: 'mono' }, f.tokens(u.cacheWriteTokens))),
+      ...kv('output', h('dd', { class: 'mono' }, f.tokens(u.outputTokens))),
+      ...kv('total', h('dd', { class: 'mono' }, f.tokens(u.totalTokens))),
+      ...kv('cost', h('dd', { class: 'mono' }, f.usageCost(u))),
       ...kv('cost basis', h('dd', null,
         h('span', { class: 'badge ' + (a.runtime === 'deepseek' ? 'badge-actual' : 'badge-est') },
-          a.runtime === 'deepseek' ? 'actual' : 'estimated'),
+          u.pricingKnown === false || u.costUsd == null ? 'unavailable' : a.runtime === 'deepseek' ? 'actual' : 'estimated'),
         ' ',
         h('span', { class: 'faint' },
-          a.runtime === 'deepseek' ? 'actual API cost' : 'API-equivalent · on plan (estimate)'))),
+          u.pricingKnown === false || u.costUsd == null ? 'No price or usage reported for this model' : a.runtime === 'deepseek' ? 'API cost at configured prices' : 'API-equivalent estimate; not a subscription charge'))),
       ...kv('fable equiv.', h('dd', { class: 'mono' },
         f.usd(u.fableEquivalentUsd),
         ' ',

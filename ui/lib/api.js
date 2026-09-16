@@ -41,6 +41,7 @@ export const api = {
   usage:        ()            => request('GET', '/api/usage'),
 
   createAgent:  (payload)     => request('POST', '/api/agents', { body: payload }),
+  handoff:      (id, payload) => request('POST', `/api/agents/${enc(id)}/handoff`, { body: payload }),
   agent:        (id)          => request('GET', `/api/agents/${enc(id)}`),
   deleteAgent:  (id)          => request('DELETE', `/api/agents/${enc(id)}`),
 
