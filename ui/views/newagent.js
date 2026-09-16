@@ -48,18 +48,18 @@ function openForm() {
   const cfg = getConfig() || {};
   const agents = treeOrder(getAgents()).map((e) => e.agent);
 
-  const parentSel = field('Parent', h('select', { name: 'parentId' },
+  const parentSel = field('Parent', h('select', { name: 'parentId', class: 'select' },
     h('option', { value: '' }, '— none (root / CTO) —'),
     ...agents.map((a) => h('option', { value: a.id }, `${a.role || '?'} · ${a.name || a.id}`))),
     'Leave empty to create a root agent.', true);
 
   const name = field('Name', h('input', { type: 'text', name: 'name', maxlength: String(NAME_MAX), placeholder: 'tags orchestrator', autocomplete: 'off' }), null, false, true);
-  const role = field('Role', h('select', { name: 'role' }, ...ROLES.map((r) => h('option', { value: r }, r))));
-  const runtime = field('Runtime', h('select', { name: 'runtime' }, ...runtimeNames(cfg).map((r) => h('option', { value: r }, cfg.runtimes?.[r]?.label || r))),
+  const role = field('Role', h('select', { name: 'role', class: 'select' }, ...ROLES.map((r) => h('option', { value: r }, r))));
+  const runtime = field('Runtime', h('select', { name: 'runtime', class: 'select' }, ...runtimeNames(cfg).map((r) => h('option', { value: r }, cfg.runtimes?.[r]?.label || r))),
     'Claude, Codex and DeepSeek launch local CLI processes. External registers an existing session.');
   const model = field('Model', h('input', { type: 'text', name: 'model', placeholder: cfg.defaultModel || 'runtime default', autocomplete: 'off' }));
-  const effort = field('Effort', h('select', { name: 'effort' }));
-  const provider = field('Session provider', h('select', { name: 'transcriptRuntime' }, h('option', { value: 'claude' }, 'Claude'), h('option', { value: 'codex' }, 'Codex')));
+  const effort = field('Effort', h('select', { name: 'effort', class: 'select' }));
+  const provider = field('Session provider', h('select', { name: 'transcriptRuntime', class: 'select' }, h('option', { value: 'claude' }, 'Claude'), h('option', { value: 'codex' }, 'Codex')));
   const session = field('Session ID', h('input', { name: 'sessionId', type: 'text', autocomplete: 'off', placeholder: 'Existing CLI session ID' }), 'Links the existing local transcript and usage. External sessions do not have a terminal here.', true);
   const task = field('Task', h('input', { type: 'text', name: 'task', maxlength: String(TASK_MAX), placeholder: 'one-line task', autocomplete: 'off' }), null, true, true);
   const cwd = field('Working directory', h('input', { type: 'text', name: 'cwd', placeholder: cfg.defaultCwd || 'absolute path to the folder the agent runs in', autocomplete: 'off' }),
@@ -259,10 +259,10 @@ export function openHandoff(agent) {
   if (!modalRoot) return;
   const cfg = getConfig() || {};
   const providers = runtimeNames(cfg).filter((r) => ['claude', 'codex'].includes(r));
-  const runtime = field('Continue with', h('select', { name: 'runtime' }, ...providers.map((r) => h('option', { value: r }, cfg.runtimes?.[r]?.label || r))));
+  const runtime = field('Continue with', h('select', { name: 'runtime', class: 'select' }, ...providers.map((r) => h('option', { value: r }, cfg.runtimes?.[r]?.label || r))));
   runtime.input.value = continuationProvider(agent, providers);
   const model = field('Model', h('input', { name: 'model', type: 'text', autocomplete: 'off' }));
-  const effort = field('Effort', h('select', { name: 'effort' }));
+  const effort = field('Effort', h('select', { name: 'effort', class: 'select' }));
   const start = h('input', { type: 'checkbox', id: 'handoff-start' });
   const error = h('div', { class: 'error-box', role: 'alert', hidden: true });
   const submit = h('button', { class: 'btn btn-primary', type: 'submit' }, 'Create continuation');
@@ -279,7 +279,7 @@ export function openHandoff(agent) {
     error, h('div', { class: 'form-grid' }, runtime.el, model.el, effort.el),
     h('label', { class: 'check-label', for: start.id }, start, 'Start the new agent immediately'),
     h('div', { class: 'modal-foot' }, h('button', { class: 'btn btn-ghost', type: 'button', onclick: closeForm }, 'Cancel'), submit));
-  const modal = h('div', { class: 'modal', role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': 'handoff-title' }, h('div', { class: 'modal-head' }, h('h2', { id: 'handoff-title', class: 'modal-title' }, 'Continue with another provider')), form);
+  const modal = h('div', { class: 'modal', role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': 'handoff-title' }, h('div', { class: 'modal-head' }, h('h2', { id: 'handoff-title', class: 'modal-title' }, 'Choose LLM')), form);
   form.addEventListener('submit', async (ev) => {
     ev.preventDefault();
     if (submit.disabled) return;

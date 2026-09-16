@@ -151,13 +151,33 @@ function makeTab(key, ctx) {
 
 // ---------------------------------------------------------------- head
 
+/** Square close glyph. h() builds HTML elements, so the SVG needs its own
+ *  namespace or the path would land in an unknown HTML element. */
+function closeIcon() {
+  const el = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  el.setAttribute('viewBox', '0 0 24 24');
+  el.setAttribute('fill', 'none');
+  el.setAttribute('stroke', 'currentColor');
+  el.setAttribute('stroke-width', '1.7');
+  el.setAttribute('stroke-linecap', 'round');
+  el.setAttribute('aria-hidden', 'true');
+  const p = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+  p.setAttribute('d', 'M6 6l12 12M18 6l-12 12');
+  el.appendChild(p);
+  return el;
+}
+
 function buildHead(agent) {
   const nameEl = h('h2', { class: 'panel-name', tabindex: '-1' }, agent.name || agent.id);
   const subEl = h('div', { class: 'panel-sub' }, '');
   const chipEl = h('span', { class: 'chip' });
   const warnEl = h('div', { class: 'panel-warn', hidden: true, role: 'status' });
-  const continueBtn = h('button', { class: 'btn btn-sm', type: 'button', onclick: () => openHandoff(getAgent(agent.id) || agent) }, 'Continue with…');
-  const closeBtn = h('button', { class: 'btn btn-sm btn-ghost panel-close', type: 'button', onclick: () => select(null), title: 'Close (Esc)' }, 'Close');
+  const continueBtn = h('button', { class: 'btn btn-sm', type: 'button', onclick: () => openHandoff(getAgent(agent.id) || agent) }, 'Choose LLM');
+  const closeBtn = h('button', {
+    class: 'icon-btn panel-close', type: 'button',
+    'aria-label': 'Close agent details', title: 'Close (Esc)',
+    onclick: () => select(null),
+  }, closeIcon());
 
   const tabBtns = new Map();
   const tabsEl = h('nav', { class: 'tabs panel-tabs', role: 'tablist', 'aria-label': 'Agent detail' },
@@ -226,7 +246,7 @@ function createExtraTab(ctx) {
   const removeBtn = h('button', { class: 'btn btn-sm btn-danger', type: 'button' }, 'Remove from tree');
   removeBtn.addEventListener('click', () => runRemove());
 
-  const markSelect = h('select', { 'aria-label': 'Mark status' },
+  const markSelect = h('select', { 'aria-label': 'Mark status', class: 'select' },
     h('option', { value: '' }, 'Mark…'),
     h('option', { value: 'done' }, 'done'),
     h('option', { value: 'blocked' }, 'blocked'),

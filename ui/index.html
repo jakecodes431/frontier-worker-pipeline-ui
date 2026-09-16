@@ -12,21 +12,6 @@
 </head>
 <body>
 
-<!-- The application mark: one parent node branching to two children, which is
-     the shape this whole app is about. Drawn for this repo; it sits on a stone
-     tile so the strokes keep their contrast on a white page. -->
-<svg width="0" height="0" style="position:absolute" aria-hidden="true">
-  <symbol id="app-mark" viewBox="0 0 64 64">
-    <g fill="none" stroke="#55534F" stroke-width="4.5" stroke-linecap="round" stroke-linejoin="round">
-      <path d="M32 21v7"/>
-      <path d="M16 36v-8h32v8"/>
-    </g>
-    <circle cx="32" cy="14" r="7" fill="#202020"/>
-    <circle cx="16" cy="43" r="6.5" fill="none" stroke="#202020" stroke-width="4.5"/>
-    <circle cx="48" cy="43" r="6.5" fill="none" stroke="#202020" stroke-width="4.5"/>
-  </symbol>
-</svg>
-
 <a class="skip-link" href="#main">Skip to content</a>
 
 <div class="app">
@@ -38,10 +23,6 @@
         <path d="M4 7h16M4 12h16M4 17h16"/>
       </svg>
     </button>
-    <div class="brand">
-      <span class="brand-tile" aria-hidden="true"><svg class="brand-mark"><use href="#app-mark"/></svg></span>
-      <span class="brand-text"><span class="brand-name">Frontier</span></span>
-    </div>
     <div class="topbar-right">
       <div class="conn" id="conn-mobile" title="Websocket connection">
         <span class="conn-dot" data-state="connecting"></span>
@@ -55,15 +36,10 @@
 
   <!-- ------------------------------------------------------- the rail -->
   <aside class="sidebar" id="sidebar">
-    <div class="brand">
-      <span class="brand-tile" aria-hidden="true"><svg class="brand-mark"><use href="#app-mark"/></svg></span>
-      <span class="brand-text">
-        <span class="brand-name">Frontier</span>
-        <span class="brand-sub" id="brand-sub">local coding fleet</span>
-      </span>
-    </div>
-
-    <div class="rule"></div>
+    <!-- app.js writes the default working directory onto #brand-sub's title.
+         The old branding block is gone, so this stays as an inert, hidden
+         anchor for that reference rather than editing app.js. -->
+    <span id="brand-sub" hidden></span>
 
     <div class="side-scroll">
       <nav class="nav" id="nav" aria-label="Views">
