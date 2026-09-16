@@ -6,6 +6,8 @@
  *   node bin/cr.js list | tree | inbox | wait <id...> [--timeout S] | result <id> | logs <id> [--tail N]
  *   node bin/cr.js send <id> "text" | report "text" | status done|blocked|failed [--note "..."] | stop <id> | restart <id> | agent <id>
  *   node bin/cr.js usage | health
+ *   node bin/cr.js handoff <id> --runtime codex|claude [--model M] [--effort E] [--brief-file F] [--no-start]
+ *   node bin/cr.js register --name CTO --provider codex|claude --session <id-or-transcript-path> --cwd <dir>
  * Identity comes from CR_AGENT_ID (set in every spawned terminal); the server URL from CR_URL,
  * falling back to the host/port in config/runtimes.json and then to http://127.0.0.1:4800.
  */
@@ -15,9 +17,10 @@ import path from 'node:path';
 /** Server URL from config/runtimes.json, so changing the port there is enough for this CLI too. */
 function configuredBase() {
   try {
-    const cfg = JSON.parse(fs.readFileSync(new URL('../config/runtimes.json', import.meta.url), 'utf8'));
+    const override = process.env.CR_CONFIG_DIR && path.join(process.env.CR_CONFIG_DIR, 'runtimes.json');
+    const cfg = JSON.parse(fs.readFileSync(override && fs.existsSync(override) ? override : new URL('../config/runtimes.json', import.meta.url), 'utf8'));
     const host = !cfg.host || cfg.host === '0.0.0.0' || cfg.host === '::' ? '127.0.0.1' : cfg.host;
-    return `http://${host}:${cfg.port || 4800}`;
+    return `http://${host}:${process.env.CR_PORT || cfg.port || 4800}`;
   } catch { return 'http://127.0.0.1:4800'; }
 }
 
@@ -74,10 +77,11 @@ async function main() {
       if (!opts.name || !opts.task) throw new Error('--name and --task are required');
       const body = {
         parentId: opts.parent || SELF || null,
-        name: opts.name, role: opts.role || 'worker', runtime: opts.runtime || 'deepseek',
+        name: opts.name, role: opts.role || 'worker', runtime: opts.runtime,
         model: opts.model, effort: opts.effort, permissionMode: opts['permission-mode'],
         task: opts.task, brief: opts['brief-file'] ? fs.readFileSync(opts['brief-file'], 'utf8') : (opts.brief || ''),
         cwd: opts.cwd, worktree: opts.repo ? { repo: opts.repo, branch: opts.branch, base: opts.base } : undefined,
+        autoStart: !opts['no-start'],
       };
       const a = await call('POST', '/api/agents', body);
       console.log(a.id);
@@ -95,6 +99,7 @@ async function main() {
         name: opts.name,
         role: opts.role || 'cto',
         runtime: 'external',
+        transcriptRuntime: opts.provider || 'claude',
         task: opts.task || `${opts.role || 'cto'} session registered from the CLI`,
         cwd: path.resolve(opts.cwd || process.cwd()),
         sessionId: opts.session || opts.sessionId || null,
@@ -103,6 +108,13 @@ async function main() {
       });
       console.log(a.id);
       console.error(`registered ${a.name} (${a.id})${a.sessionId ? ` tracking session ${a.sessionId}` : ' — pass --session <id> to read its transcript'}`);
+      return;
+    }
+    case 'handoff': {
+      if (!pos[0] || !opts.runtime) throw new Error('handoff requires an agent id and --runtime codex|claude');
+      const a = await call('POST', `/api/agents/${pos[0]}/handoff`, { runtime: opts.runtime, model: opts.model, effort: opts.effort, autoStart: !opts['no-start'], brief: opts['brief-file'] ? fs.readFileSync(opts['brief-file'], 'utf8') : undefined });
+      console.log(a.id);
+      console.error(`continued task as ${a.name} (${a.status}) in ${a.cwd}`);
       return;
     }
     case 'list': {
@@ -159,7 +171,11 @@ async function waitFor(ids, timeoutS) {
   const deadline = Date.now() + timeoutS * 1000;
   for (;;) {
     const all = await call('GET', '/api/agents');
-    const sel = ids.map(id => all.find(a => a.id === id || a.name === id)).filter(Boolean);
+    const sel = ids.map(id => {
+      const matches = all.filter(a => a.id === id || a.name === id);
+      if (matches.length !== 1) throw new Error(matches.length ? `ambiguous agent name: ${id}; use its id` : `agent not found: ${id}`);
+      return matches[0];
+    });
     if (sel.length && sel.every(a => TERMINAL.has(a.status) || a.status === 'blocked')) return sel;
     if (Date.now() > deadline) return sel;
     await new Promise(r => setTimeout(r, 5000));

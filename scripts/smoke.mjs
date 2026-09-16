@@ -136,7 +136,7 @@ const { adapters } = await import(pathToFileURL(path.join(ROOT, 'server', 'adapt
 const bare = { id: 'a-smoke', name: 'smoke', role: 'worker', prompt: 'hi', cwd: ROOT, parentId: null };
 const builtArgs = adapters.claude.build(bare, PORT).args;
 check('an unset model drops its --model flag rather than dangling',
-  !builtArgs.includes('--model') && !builtArgs.includes('--effort') && !builtArgs.some((a) => /^\{.*\}$/.test(a)),
+  !builtArgs.includes('--model') && !builtArgs.includes('--effort') && !builtArgs.some((a) => /^\{\w+\}$/.test(a)),
   builtArgs.join(' '));
 check('a filled placeholder still reaches argv', builtArgs.includes('hi'), builtArgs.join(' '));
 
@@ -200,7 +200,7 @@ try {
 
   // -- static UI ------------------------------------------------------------
   const html = await (await fetch(`${base}/`)).text();
-  check('UI index served', /<title>Control Room<\/title>/i.test(html));
+  check('UI index served', /<title>[^<]*Control Room<\/title>/i.test(html) && html.includes('id="sidebar"'));
   check('UI ships the offline banner and skip link', html.includes('id="netbar"') && html.includes('skip-link'));
   check('xterm vendor served', (await fetch(`${base}/vendor/xterm/xterm.js`)).ok);
   const assets = ['app.js', 'styles.css', 'mock.js', 'lib/api.js', 'lib/dom.js', 'lib/format.js', 'lib/store.js', 'lib/ws.js',

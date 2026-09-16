@@ -214,6 +214,24 @@ The banner tracks the WebSocket. If it stays up while the server is running:
 
 ---
 
+## "Connect Claude usage" cannot reach the endpoint
+
+The dialog is truthful about which failure it sees, and none of those states
+means "0% used":
+
+- **404 / "does not serve /api/claude-usage"** — the running control room
+  process is older than the endpoint. Restart the server (stop the process,
+  then `npm start`); the dialog cannot do it for you. Until then the endpoint
+  keeps answering 404.
+- **network error** — the request never reached a server. Check that the
+  control room is still running, then reopen the dialog.
+- **"not connected yet"** — the endpoint answered, but no Claude Code
+  statusLine observation exists yet. That is an absence of data, not 0% used.
+- **a past observation** — the dialog shows when it was observed and marks it
+  as a snapshot that may have changed since.
+
+---
+
 ## Spend numbers look wrong
 
 - All displayed costs are price-sheet estimates from recorded tokens, not
@@ -223,7 +241,9 @@ The banner tracks the WebSocket. If it stays up while the server is running:
   Add a verified rate in `config/pricing.json` to price an unsupported model.
 - Codex limits, when available, come from the last local rollout observation
   of account-level `rate_limits`. They may be stale. Missing limits are unknown,
-  not zero remaining and not unlimited. Claude and DeepSeek limits are unknown.
+  not zero remaining and not unlimited. Claude plan limits appear only after a
+  statusLine observation (a managed session, or the block from **Connect Claude
+  usage**); before that they are unknown, not zero. DeepSeek limits are unknown.
 - Spend is banked on the local day the increment was measured, not entirely on
   the day the session started. Registering the same session twice can count it
   twice; remove accidental duplicate registrations.

@@ -12,20 +12,43 @@
 import { h, replace, qs } from '../lib/dom.js';
 import * as f from '../lib/format.js';
 import { store, getUsage, getAgents, getConfig, isLoaded, getLoadError } from '../lib/store.js';
-import { limitObservation, limitPercent, comparisonModelLabel } from '../lib/limits.js';
+import {
+  limitObservation, limitPercent, limitTime, comparisonModelLabel,
+  budgetClient, parseBudgetInput, formatBudgetValue, budgetStatusText, budgetTone, budgetFraction,
+  claudeUsageState, claudeStatuslineCommand,
+} from '../lib/limits.js';
 
 const PLAN_BASIS = 'API-equivalent estimate; not a subscription charge';
 const API_BASIS = 'API cost estimate from configured prices';
+const BUDGET_BASIS = 'Tracking only — the control room does not stop or bill work against this number.';
+const BUDGET_POLL_MS = 15000;
 
 let root = null;
 let frame = 0;
 let lastSig = '';
+
+/**
+ * Daily-budget panel state.
+ *
+ * The panel is built once and patched in place rather than rebuilt with the
+ * rest of the grid: a rebuild while the operator is typing would replace the
+ * focused input. `budgetData` / `budgetError` are what the server last said,
+ * and `budgetDirty` marks an edit that has not been saved yet. Polls never
+ * write into a dirty or focused field — an edit is the operator's until save.
+ */
+let budgetPanel = null;
+let budgetRefs = null;
+let budgetData = null;
+let budgetError = null;
+let budgetDirty = false;
+let budgetBusy = false;
 
 export function mountDashboard(el) {
   root = el;
   store.on('usage', schedule);
   store.on('agents', schedule);
   store.on('config', schedule);
+  budgetPanel = buildBudgetPanel();
   render();
   setInterval(() => {
     const node = root && root.querySelector('[data-run-elapsed]');
@@ -34,7 +57,10 @@ export function mountDashboard(el) {
       node.textContent = s === null ? '—' : f.duration(s);
     }
   }, 1000);
+  setInterval(refreshBudget, BUDGET_POLL_MS);
+  refreshBudget();
 }
+
 
 /**
  * This view is rebuilt wholesale, and a single 5s server frame emits BOTH
@@ -170,22 +196,25 @@ function pct(part, whole) {
 /* ----------------------------------------------------------------- render */
 
 function render() {
+  if (budgetRefs?.input === document.activeElement) { updateBudgetPanel(); return; }
   if (!root) return;
   const u = getUsage();
   const agents = getAgents();
 
   const sig = signature(u, agents);
-  if (sig === lastSig && root.firstChild) return;
+  if (sig === lastSig && root.firstChild) { updateBudgetPanel(); return; }
   lastSig = sig;
 
   if (!u) {
     const err = getLoadError();
     replace(root, h('div', { class: 'page' }, err ? serverDown(err) : h('div', { class: 'loading' }, 'Waiting for the first state frame from the server…')));
+    updateBudgetPanel();
     return;
   }
 
   if (!agents.length && isLoaded()) {
     replace(root, h('div', { class: 'page' }, firstRun()));
+    updateBudgetPanel();
     return;
   }
 
@@ -205,8 +234,9 @@ function render() {
       tierPlate(u.byTier || {}, u.byTierAgents || {}),
       fleetPlate({ agents, counts, running, active }),
       tokenPlate(u.tokens || {}),
-      limitPlate(u.limits || {}),
+      budgetPlate(u.limits || {}),
       savingsPlate(u.savings || null))));
+  updateBudgetPanel();
 }
 
 /* ------------------------------------------------------------ empty states */
@@ -432,23 +462,112 @@ function tokenPlate(tk) {
   ]);
 }
 
-/* ----------------------------------------------------------------- limits */
+/* ------------------------------------------------- plan usage & budget */
 
-function limitPlate(limits) {
+/**
+ * The limits plate doubles as the daily-budget editor. Claude and Codex keep
+ * their observed-window cards; DeepSeek's card is replaced by an operator-set
+ * daily budget, because DeepSeek is the metered-money tier — its CLI reports no
+ * plan window, so a budget the operator sets is the useful readout.
+ *
+ * `el` is the singleton panel from mountDashboard; it is re-attached here on
+ * every rebuild, and its live input is never re-created, so polling and the 5s
+ * state frame cannot steal focus or discard an unsaved edit.
+ */
+function budgetPlate(limits) {
   const extra = Object.entries(limits).filter(([k]) => !['claude', 'codex', 'deepseek'].includes(k));
-  return plate('Limits & resets', 'latest CLI observations · account-wide, not per agent', [
-    limitPanel('Claude plan limits', limits.claude, 'w-8'),
+  return plate('Plan usage & daily budget', 'latest CLI observations · account-wide, not per agent', [
+    limitPanel('Claude plan limits', limits.claude, 'w-8', { connect: !limits.claude }),
     limitPanel('Codex plan limits', limits.codex, 'w-8'),
-    limitPanel('DeepSeek limits', limits.deepseek, 'w-8'),
-    extra.map(([k, v]) => limitPanel(k + ' limits', v, 'w-8')),
+    budgetPanel,
+    ...extra.map(([k, v]) => limitPanel(k + ' limits', v, 'w-8')),
   ]);
 }
 
-function limitPanel(label, lim, width) {
+async function showClaudeConnection() {
+  const content = h('div', { class: 'stat-sub' }, 'Loading connection settings…');
+  const close = h('button', { class: 'btn btn-sm', type: 'button' }, 'Close');
+  const dialog = h('dialog', { class: 'modal', style: { maxWidth: '640px', width: 'calc(100% - 32px)' }, 'aria-label': 'Connect Claude usage' },
+    h('h2', null, 'Connect Claude usage'), content, close);
+  close.onclick = () => dialog.close();
+  dialog.addEventListener('close', () => dialog.remove());
+  document.body.appendChild(dialog); dialog.showModal();
+  const result = await fetchClaudeUsage();
+  renderClaudeConnection(content, claudeUsageState(result, { now: Date.now() }));
+}
+
+/** One GET /api/claude-usage, reduced to a value the pure state helper reads. */
+async function fetchClaudeUsage() {
+  try {
+    const response = await fetch('/api/claude-usage', { headers: { Accept: 'application/json' } });
+    if (!response.ok) return { ok: false, status: response.status };
+    let data = null;
+    try { data = await response.json(); } catch { data = null; }
+    return { ok: true, data };
+  } catch (error) {
+    return { ok: false, status: 0, message: error && error.message ? error.message : String(error) };
+  }
+}
+
+/**
+ * Render the dialog from the pure `claudeUsageState` result.
+ *
+ * The state banner always names what actually happened; a missing endpoint, a
+ * network failure and an unobserved plan each get their own wording so none is
+ * ever shown as empty or 0% usage. The settings block, copy button and note are
+ * shown whenever the server sent them; the manual instructions and docs link
+ * are always present. The command block falls back to the page's own public
+ * config only to keep a ready-to-apply JSON visible while the endpoint is
+ * unreachable — it never supplies usage numbers.
+ */
+function renderClaudeConnection(content, state) {
+  const settings = state.settings || claudeStatuslineCommand(getConfig());
+  const code = settings ? JSON.stringify(settings, null, 2) : null;
+  const nodes = [
+    h('div', { class: 'error-box', role: state.ok ? 'status' : 'alert' },
+      h('strong', null, state.title),
+      h('p', { class: 'step-text', style: { marginTop: '8px' } }, state.message),
+      state.action ? h('p', { class: 'step-text', style: { marginTop: '8px' } }, state.action) : null),
+  ];
+  if (state.observedAt) {
+    const when = limitTime(state.observedAt) || state.observedAt;
+    nodes.push(h('p', { class: 'stat-sub' }, `Observation: ${when}`, state.stale ? ' · may have changed since' : ' · most recent snapshot'));
+  }
+  if (state.note) nodes.push(h('p', { class: 'stat-sub' }, state.note));
+  nodes.push(h('p', { style: { marginTop: '12px' } },
+    'For a session launched here, choose Claude in New agent or Choose LLM — managed sessions pass this statusLine automatically. ',
+    'For an existing (non-managed) Claude Code session, merge the statusLine block below into your Claude Code settings and preserve every other setting you already have. ',
+    'If a status-line script already exists, add this capture command to it instead of replacing it.'));
+  if (code) {
+    const copy = h('button', { class: 'btn btn-sm', type: 'button' }, 'Copy settings');
+    copy.onclick = async () => { try { await navigator.clipboard.writeText(code); copy.textContent = 'Copied'; } catch { copy.textContent = 'Select and copy the settings below'; } };
+    nodes.push(h('div', { class: 'btn-row' }, copy));
+    nodes.push(h('pre', { class: 'mono', style: { whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', padding: '16px' } }, code));
+  } else {
+    nodes.push(h('p', { class: 'stat-sub dim' }, 'The server is unreachable, so the exact command block (which embeds its data directory) cannot be shown here. The manual steps above still apply; reopen this dialog once the server is running.'));
+  }
+  nodes.push(h('a', { href: 'https://code.claude.com/docs/en/statusline', target: '_blank', rel: 'noreferrer', class: 'link' }, 'Claude status-line documentation'));
+  replace(content, ...nodes);
+}
+
+function limitPanel(label, lim, width, { connect = false } = {}) {
   if (!lim) {
-    return panel(width, label, [null, 'not reported', null], {
-      na: true, sub: 'the server reported no limit block for this runtime',
-    });
+    // `connect` marks the provider whose local usage docs can be linked. The
+    // button is rendered here; wiring it up is the root integration's job.
+    const action = connect
+      ? h('div', { class: 'btn-row', style: { marginTop: '12px' } },
+          h('button', {
+            class: 'btn btn-sm', type: 'button', 'data-connect-claude': 'usage', onclick: showClaudeConnection,
+          }, 'Connect Claude usage'),
+          h('span', { class: 'dim' }, 'Connect your local Claude Code session.'))
+      : null;
+    return h('div', { class: 'panel ' + width },
+      h('div', { class: 'panel-title' }, label),
+      h('div', { class: 'stat-value na' }, 'not reported'),
+      h('div', { class: 'stat-sub' }, connect
+        ? 'no Claude usage observation yet — this is not 0% used'
+        : 'the server reported no limit block for this runtime'),
+      action);
   }
   const observation = limitObservation(lim);
   const measured = observation.windows.filter(w => w.remaining !== null);
@@ -466,6 +585,122 @@ function limitPanel(label, lim, width) {
     basis: observation.observedAt ? `Observed ${observation.observedAt} · may have changed since` : 'Observation time not reported · this is not a live limit check',
   });
 }
+
+/** Build the singleton budget panel, its controls and their handlers. */
+function buildBudgetPanel() {
+  const inputId = 'budget-daily-usd';
+  const input = h('input', {
+    type: 'text', id: inputId, class: 'mono', inputmode: 'decimal', autocomplete: 'off',
+    placeholder: 'No budget set', 'aria-describedby': 'budget-help budget-status',
+  });
+  const save = h('button', { class: 'btn btn-primary btn-sm', type: 'submit', disabled: true }, 'Save');
+  const form = h('form', { class: 'btn-row', style: { marginTop: '12px' }, novalidate: true },
+    h('div', { style: { flex: '1 1 160px', minWidth: '120px' } },
+      h('label', { class: 'label', for: inputId }, 'Daily budget (USD)'),
+      input),
+    save);
+  const status = h('div', { class: 'stat-sub', id: 'budget-status', role: 'status' });
+  const help = h('div', { class: 'stat-sub dim', id: 'budget-help' }, BUDGET_BASIS);
+  const value = h('div', { class: 'stat-value' });
+  const sub = h('div', { class: 'stat-sub' });
+  const viz = h('div', { class: 'meter' }, h('div', { class: 'meter-fill', dataset: { tone: 'quiet' } }));
+  const el = h('div', { class: 'panel w-8', dataset: { budget: 'deepseek' } },
+    h('div', { class: 'panel-title' }, 'DeepSeek daily budget', h('span', { class: 'badge badge-est' }, 'tracking only')),
+    value, sub, form, status, viz, help);
+
+  const setStatus = (text, kind) => {
+    status.textContent = text || '';
+    if (kind) status.dataset.tone = kind; else delete status.dataset.tone;
+  };
+  const syncSave = () => { save.disabled = !budgetDirty; };
+  const onEdit = () => {
+    budgetDirty = true;
+    syncSave();
+    // An edit supersedes a stale save/load note; the value itself is untouched.
+    setStatus('Editing — press Save to apply.', null);
+  };
+  input.addEventListener('input', onEdit);
+  input.addEventListener('blur', schedule);
+  form.addEventListener('submit', (ev) => {
+    ev.preventDefault();
+    submitBudget();
+  });
+
+  budgetRefs = { input, save, status, value, sub, viz, setStatus, syncSave, help };
+  return el;
+}
+
+/** Push the last server payload (and any save status) into the singleton panel. */
+function updateBudgetPanel() {
+  if (!budgetRefs) return;
+  const { input, value, sub, viz, setStatus, syncSave } = budgetRefs;
+  syncSave();
+  // The field owns the operator's edit until Save: a dirty or focused input is
+  // never overwritten by a poll or by the 5s state frame.
+  const focused = input.isConnected && document.activeElement === input;
+  if (!budgetDirty && !focused && !budgetError) {
+    input.value = formatBudgetValue(budgetData && budgetData.dailyUsd);
+  }
+  if (budgetData) {
+    value.className = 'stat-value';
+    value.dataset.tone = budgetTone(budgetData) === 'blocked' ? 'blocked' : '';
+    value.textContent = f.usd(Number(budgetData.spentUsd) || 0);
+    sub.textContent = budgetStatusText(budgetData);
+    const fill = viz.firstElementChild;
+    fill.dataset.tone = budgetTone(budgetData);
+    fill.style.width = (budgetFraction(budgetData) * 100).toFixed(1) + '%';
+  } else {
+    value.className = 'stat-value na';
+    value.dataset.tone = '';
+    value.textContent = 'not reported';
+    sub.textContent = 'the server has not reported a budget yet';
+  }
+  if (budgetBusy) setStatus('Saving…', null);
+  else if (budgetError) setStatus(budgetError, 'failed');
+  else if (budgetRefs.savedNote) setStatus('Saved', 'done');
+  else setStatus('', null);
+}
+
+/** Read the budget while the dashboard is visible; at most one request in flight. */
+function refreshBudget() {
+  if (!root || root.hidden || budgetBusy) return;
+  budgetBusy = true;
+  budgetClient.read().then((data) => {
+    budgetData = data;
+    budgetError = null;
+    if (budgetRefs) budgetRefs.savedNote = false;
+  }).catch((err) => {
+    budgetError = `Could not load the budget: ${err && err.message ? err.message : err}`;
+  }).finally(() => {
+    budgetBusy = false;
+    updateBudgetPanel();
+  });
+}
+
+/** Persist what is in the field; validation errors stay next to the input. */
+function submitBudget() {
+  if (!budgetRefs || budgetBusy) return;
+  const { input, setStatus } = budgetRefs;
+  const parsed = parseBudgetInput(input.value);
+  if (parsed.error) { budgetDirty = true; setStatus(parsed.error, 'failed'); budgetRefs.syncSave(); return; }
+  budgetError = null;
+  budgetBusy = true;
+  budgetRefs.savedNote = false;
+  setStatus('Saving…');
+  budgetClient.save(parsed.value).then((data) => {
+    budgetData = data;
+    budgetError = null;
+    budgetDirty = false;
+    input.value = formatBudgetValue(data.dailyUsd);
+    budgetRefs.savedNote = true;
+  }).catch((err) => {
+    budgetError = `Could not save the budget: ${err && err.message ? err.message : err}`;
+  }).finally(() => {
+    budgetBusy = false;
+    updateBudgetPanel();
+  });
+}
+
 
 /* ---------------------------------------------------------------- savings */
 
@@ -497,7 +732,7 @@ function savingsPlate(sav) {
         h('div', { class: 'cmp-bar' }, h('div', { class: 'cmp-fill', dataset: { tone: 'done' }, style: { width: ((actual / max) * 100).toFixed(2) + '%' } }))),
       h('div', null,
         h('div', { class: 'cmp-top' },
-          h('span', { class: 'cmp-name' }, `Same work on ${comparisonModel} — API-equivalent estimate`),
+          h('span', { class: 'cmp-name' }, 'Fable/Astra equivalent — API-equivalent estimate'),
           h('span', { class: 'cmp-val' }, f.usd(equiv))),
         h('div', { class: 'cmp-bar' }, h('div', { class: 'cmp-fill', style: { width: ((equiv / max) * 100).toFixed(2) + '%' } })))),
     h('div', { class: 'basis' }, `DeepSeek usage re-priced at the ${comparisonModel} price sheet. Both sides are estimates from configured prices.`));

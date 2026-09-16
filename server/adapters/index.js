@@ -9,6 +9,7 @@ import path from 'node:path';
 import { config, expandHome, expandValue, protocolTemplate, CR_BIN, BRIEFS_DIR } from '../config.js';
 import { readClaudeTranscript, claudeTranscriptPath, findDshSession, readDshSession } from '../usage.js';
 import { locateCodexSession, readCodexTranscript } from '../codex-usage.js';
+import { claudeStatuslineSettings } from '../claude-limits.js';
 
 function fill(template, vars) {
   return template.replace(/\{(\w+)\}/g, (whole, k) => (k in vars ? (vars[k] ?? '') : whole));
@@ -41,6 +42,10 @@ function buildArgs(templates, vars) {
 
 function baseEnv(agent, port, rt = {}) {
   const env = { ...process.env };
+  // The host runner may be non-interactive (TERM=dumb), but this child receives
+  // a real xterm-compatible PTY. Do not trigger a CLI's non-terminal fallback.
+  env.TERM = 'xterm-256color';
+  env.COLORTERM = 'truecolor';
   // The control room may itself have been started from inside a Claude Code session. A child `claude`
   // that inherits those markers treats itself as a nested child and turns transcript saving off,
   // which would blind usage and chat. Strip them and force persistence.
@@ -91,6 +96,7 @@ export const adapters = {
         prompt: agent.prompt,
       };
       const args = buildArgs(resume ? rt.resumeArgs : rt.args, vars);
+      args.push('--settings', JSON.stringify(claudeStatuslineSettings()));
       return { command: rt.command, args, env: baseEnv(agent, port, rt) };
     },
     transcript(agent) { return claudeTranscriptPath(agent.cwd, agent.sessionId); },
@@ -113,7 +119,11 @@ export const adapters = {
       if (permissionMode && !['read-only', 'workspace-write', 'danger-full-access'].includes(permissionMode)) throw Object.assign(new Error('Codex permissionMode must be read-only, workspace-write, or danger-full-access.'), { code: 400 });
       if (effort && !['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'].includes(effort)) throw Object.assign(new Error('Unsupported Codex reasoning effort.'), { code: 400 });
       const vars = { model: agent.model || d.model, permissionMode, sessionId: agent.sessionId, prompt: agent.prompt, reasoningConfig: effort ? `model_reasoning_effort=${JSON.stringify(effort)}` : null };
-      return { command: rt.command, args: buildArgs(resume ? rt.resumeArgs : rt.args, vars), env: baseEnv(agent, port, rt) };
+      const args = buildArgs(resume ? rt.resumeArgs : rt.args, vars);
+      // Desktop may use an external clock supplied by its app-server. A standalone
+      // CLI has no such callback; keep that desktop-only reminder out of this child.
+      args.push('-c', 'features.current_time_reminder.enabled=false');
+      return { command: rt.command, args, env: baseEnv(agent, port, rt) };
     },
     locate: locateCodexSession,
     transcript(agent) { return this.locate(agent)?.file || null; },

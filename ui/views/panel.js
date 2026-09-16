@@ -13,7 +13,10 @@ import { h, replace, clear, setText, setAttr, toast } from '../lib/dom.js';
 import * as f from '../lib/format.js';
 import api from '../lib/api.js';
 import { store, getAgent, select } from '../lib/store.js';
-import { openHandoff } from './newagent.js';
+import { openHandoff, handoffButtonState } from './newagent.js';
+// The chooser-state rule is part of this panel's contract; re-export it so the
+// UI tests can reach the pure helper through the view that owns the button.
+export { handoffButtonState };
 import { applyElapsed } from './hierarchy.js';
 
 import { createChatTab } from './tabs/chat.js';
@@ -172,7 +175,18 @@ function buildHead(agent) {
   const subEl = h('div', { class: 'panel-sub' }, '');
   const chipEl = h('span', { class: 'chip' });
   const warnEl = h('div', { class: 'panel-warn', hidden: true, role: 'status' });
-  const continueBtn = h('button', { class: 'btn btn-sm', type: 'button', onclick: () => openHandoff(getAgent(agent.id) || agent) }, 'Choose LLM');
+  const continueBtn = h('button', {
+    class: 'btn btn-sm', type: 'button',
+    // Re-read the record at click time: the live state below may have moved on
+    // since the last render, and the chooser explains (but never performs) the
+    // stop that the server requires before a successor can be created.
+    onclick: () => {
+      const current = getAgent(agent.id) || agent;
+      const state = handoffButtonState(current);
+      if (!state.openable) return;
+      openHandoff(current, { live: state.live });
+    },
+  }, 'Choose LLM');
   const closeBtn = h('button', {
     class: 'icon-btn panel-close', type: 'button',
     'aria-label': 'Close agent details', title: 'Close (Esc)',
@@ -201,9 +215,12 @@ function buildHead(agent) {
     el,
     focus() { try { nameEl.focus(); } catch { /* ignore */ } },
     update(a) {
-      continueBtn.hidden = !['cto', 'orchestrator'].includes(a.role);
-      continueBtn.disabled = Boolean(a.successorId) || (!['stopped', 'blocked', 'done', 'failed'].includes(a.status) && a.runtime !== 'external');
-      continueBtn.title = a.successorId ? 'This session already has a continuation' : continueBtn.disabled ? 'Stop the current session before continuing with another provider' : 'Create a successor with a recovery brief';
+      // An active managed session must still be able to open the chooser; only
+      // roles that cannot hand off, and an already-continued task, block it.
+      const handoff = handoffButtonState(a);
+      continueBtn.hidden = handoff.hidden;
+      continueBtn.disabled = handoff.disabled;
+      continueBtn.title = handoff.title;
       setText(nameEl, a.name || a.id);
       setAttr(nameEl, 'title', a.name || a.id);
       setText(subEl, [a.role, a.runtime, a.model, a.effort && ('effort: ' + a.effort), a.id]

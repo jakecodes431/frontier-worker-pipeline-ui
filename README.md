@@ -625,6 +625,54 @@ saving from delegating to cheap workers.
 
 ---
 
+## Daily budget, usage connection and imports
+
+**Daily budget.** `GET /api/budget` shows the day's measured DeepSeek spend
+beside a daily-USD cap you set with `POST /api/budget {"dailyUsd": 10}` (`null`
+clears it), persisted to `data/budget.json` (`CR_DATA_DIR` moves it). It is a
+**tracking aid, not enforcement**: passing the number never pauses or refuses an
+agent, it only lets the dashboard show "$4.10 of $10.00 today (41%, $5.90
+left)". The accepted value is a finite number greater than 0 and at most
+1,000,000; anything else is a `400`.
+
+**Connecting a Claude session to hub usage.** Managed Claude sessions are
+started with a `statusLine` command that runs this checkout's
+`scripts/claude-statusline.mjs` against the server's data directory, so their
+plan usage reaches the hub without reading any credential. For a Claude session
+the hub did not start, call `GET /api/claude-usage` and add the returned
+`settings.statusLine` to your Claude Code settings, preserving everything else;
+usage appears after the next API response on a supported plan. The script keeps
+only the five-hour/seven-day percentages and reset times. Make sure the session
+and the server use the same `CR_DATA_DIR` (default `./data`) or the hub will
+never see the file. `CR_PORT` changes where the hub listens and `CR_CONFIG_DIR`
+changes where `runtimes.json` / `pricing.json` / `protocol.md` are read; neither
+moves the usage file.
+
+**Importing a previous control room's history.** `node scripts/import-history.mjs
+<source-data-dir> <destination-data-dir>` additively merges a previous data
+directory — its `control-room.sqlite` tables (agents, messages, events, usage
+samples and cursors) plus `scrollback/` and `briefs/` files — into an
+already-initialized destination. It backs the destination up to
+`before-history-import-<timestamp>.sqlite` first, never overwrites a row or file
+already in the destination, records what it imported so a repeated run is a
+no-op, forces any agent that was mid-run to `stopped` (a persisted flag is not a
+live process), and prints the imported counts and backup path. Both directories
+must exist and differ, and the destination must already contain
+`control-room.sqlite`.
+
+**Folder picker.** `POST /api/directories/pick` (`{ "initialPath": "…" }`,
+optional) opens the OS folder chooser for the New-agent form — and only ever
+because the operator clicked the button; nothing opens a dialog on its own. It
+is Windows-only and answers `501` elsewhere. It returns `200 { "path": "…" }`
+with the chosen absolute directory, `200 { "path": null }` on cancel (not an
+error), `409` when a picker is already open, `504` on timeout, and `400` when
+`initialPath` is present but not a string. An unusable *string* `initialPath`
+(relative, stale or not a directory) is ignored and the dialog opens at its
+default, so a stale value in the form cannot block picking. Full contract in
+[docs/API.md](docs/API.md#post-apidirectoriespick).
+
+---
+
 ## Security and limits
 
 This is a single-user local developer tool. Loopback binding and same-origin

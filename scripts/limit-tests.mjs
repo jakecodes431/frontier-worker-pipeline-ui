@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { limitObservation, limitWindowLabel, limitTime, limitPercent, comparisonModelLabel } from '../ui/lib/limits.js';
+import { limitObservation, limitWindowLabel, limitTime, limitPercent, comparisonModelLabel, claudeUsageState } from '../ui/lib/limits.js';
 const time = { locale: 'en-US', timeZone: 'UTC' };
 const raw = { primary: { used_percent: 96, window_minutes: 10080, resets_at: 1767276000 }, secondary: { used_percent: 0, window_minutes: 300, resets_at: null }, observedAt: '2026-01-01T12:00:00Z' };
 const read = limitObservation(raw, time);
@@ -22,4 +22,14 @@ assert.equal(limitWindowLabel(null, 'Secondary window'), 'Secondary window');
 assert.equal(limitTime('invalid', time), null); assert.equal(limitTime(null, time), null); assert.equal(limitTime(0, time), 'Jan 1, 12:00 AM UTC');
 assert.equal(comparisonModelLabel({ pricing: { fableEquivalentModel: 'configured-test-model' } }), 'configured-test-model');
 assert.equal(comparisonModelLabel({}), 'configured comparison model');
-console.log('Limit formatting tests passed: observed usage, both windows, resets, missing versus zero, configured savings model.');
+
+/* Claude connection dialog states (pure helper; full coverage in usage-connection-tests.mjs) */
+const dialogNow = Date.parse('2026-02-01T00:00:00.000Z');
+const dialogSettings = { statusLine: { type: 'command', command: 'node "s" "d"' } };
+assert.equal(claudeUsageState({ ok: false, status: 404 }, { now: dialogNow }).kind, 'stale-server');
+assert.equal(claudeUsageState({ ok: false, status: 0 }, { now: dialogNow }).kind, 'network-error');
+assert.equal(claudeUsageState({ ok: false, status: 503 }, { now: dialogNow }).kind, 'server-error');
+assert.equal(claudeUsageState({ ok: true, data: { limits: null, settings: dialogSettings } }, { now: dialogNow }).kind, 'not-connected');
+assert.equal(claudeUsageState({ ok: true, data: { limits: { observedAt: '2026-01-31T23:45:00.000Z', primary: { used_percent: 5 } }, settings: dialogSettings } }, { now: dialogNow }).kind, 'present');
+assert.equal(claudeUsageState({ ok: true, data: { limits: { observedAt: '2026-01-31T10:00:00.000Z', primary: { used_percent: 5 } }, settings: dialogSettings } }, { now: dialogNow }).kind, 'stale-observation');
+console.log('Limit formatting tests passed: observed usage, both windows, resets, missing versus zero, configured savings model, and Claude connection dialog states.');

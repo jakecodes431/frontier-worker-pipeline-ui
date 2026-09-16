@@ -90,6 +90,12 @@ CREATE INDEX IF NOT EXISTS idx_events_agent ON events(agent_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_usage_day ON usage_samples(day);
 `);
 
+// Additive migration: existing fleets keep their original ids, history and costs.
+const agentColumns = new Set(db.prepare('PRAGMA table_info(agents)').all().map(c => c.name));
+for (const column of ['transcript_runtime', 'continued_from_id', 'successor_id']) {
+  if (!agentColumns.has(column)) db.exec(`ALTER TABLE agents ADD COLUMN ${column} TEXT`);
+}
+
 // One-time migration for databases written before usage_samples held per-day
 // DELTAS: seed each cursor from what was already recorded so the next refresh
 // adds only new usage instead of re-counting the whole session.
@@ -126,6 +132,9 @@ function rowToAgent(r) {
     name: r.name,
     role: r.role,
     runtime: r.runtime,
+    transcriptRuntime: r.transcript_runtime || 'claude',
+    continuedFromId: r.continued_from_id || null,
+    successorId: r.successor_id || null,
     model: r.model,
     effort: r.effort,
     permissionMode: r.permission_mode,
@@ -162,7 +171,7 @@ const stmts = {
   children: db.prepare('SELECT * FROM agents WHERE parent_id = ? ORDER BY created_at'),
   deleteAgent: db.prepare('DELETE FROM agents WHERE id = ?'),
   insertMessage: db.prepare('INSERT INTO messages (agent_id,from_agent_id,direction,sender,text,created_at) VALUES (?,?,?,?,?,?)'),
-  messagesFor: db.prepare('SELECT * FROM messages WHERE agent_id = ? ORDER BY id DESC LIMIT ?'),
+  messagesFor: db.prepare('SELECT * FROM messages WHERE agent_id = ? ORDER BY created_at DESC, id DESC LIMIT ?'),
   inboxFor: db.prepare("SELECT * FROM messages WHERE agent_id = ? AND direction = 'report' AND read = 0 ORDER BY id"),
   markRead: db.prepare("UPDATE messages SET read = 1 WHERE agent_id = ? AND direction = 'report'"),
   insertEvent: db.prepare('INSERT INTO events (agent_id,kind,data,created_at) VALUES (?,?,?,?)'),
@@ -188,7 +197,7 @@ export const agents = {
     stmts.insertAgent.run(a.id, a.parentId ?? null, a.name, a.role, a.runtime, a.model ?? null, a.effort ?? null, a.permissionMode ?? null,
       a.status, a.task ?? null, a.note ?? null, a.cwd ?? null, a.worktree ? JSON.stringify(a.worktree) : null, a.controlledBy || 'parent',
       a.sessionId ?? null, a.briefPath ?? null, a.prompt ?? null, now(), JSON.stringify(emptyUsage()));
-    return this.get(a.id);
+    return this.update(a.id, { transcriptRuntime: a.transcriptRuntime || 'claude', continuedFromId: a.continuedFromId || null });
   },
   get(id) { return rowToAgent(stmts.getAgent.get(id)); },
   raw(id) { return stmts.getAgent.get(id); },
@@ -201,6 +210,7 @@ export const agents = {
       parentId: 'parent_id', name: 'name', role: 'role', model: 'model', effort: 'effort', status: 'status', task: 'task', note: 'note',
       cwd: 'cwd', controlledBy: 'controlled_by', sessionId: 'session_id', pid: 'pid', exitCode: 'exit_code', startedAt: 'started_at',
       endedAt: 'ended_at', result: 'result', briefPath: 'brief_path', prompt: 'prompt', permissionMode: 'permission_mode',
+      transcriptRuntime: 'transcript_runtime', continuedFromId: 'continued_from_id', successorId: 'successor_id',
     };
     const sets = []; const vals = [];
     for (const [k, v] of Object.entries(patch)) {
@@ -291,6 +301,7 @@ export const usageSamples = {
   /** Deleting an agent does not rewrite history; this is for tests and resets. */
   forget(agentId) { stmts.dropCursors.run(agentId); stmts.dropSamples.run(agentId); },
   spendSince(day) { return stmts.usageSince.get(day)?.cost || 0; },
+  spendRuntimeSince(runtime, day) { return db.prepare('SELECT COALESCE(SUM(u.cost_usd),0) AS cost FROM usage_samples u JOIN agents a ON a.id=u.agent_id WHERE a.runtime=? AND u.day>=?').get(runtime, day).cost; },
   rows(agentId) { return stmts.usageByAgentDay.all(agentId); },
 };
 

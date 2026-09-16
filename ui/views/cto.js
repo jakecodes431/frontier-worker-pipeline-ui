@@ -122,6 +122,7 @@ export function mountCto({ view, badge }) {
   let active = false;
   let timer = 0;
   let inflight = false;
+  let refreshAgain = false;
   let transcript = [];
   let messages = [];
   let pending = null;          // optimistic bubble while the POST is in flight
@@ -283,7 +284,7 @@ export function mountCto({ view, badge }) {
 
   async function refresh() {
     if (!agentId) { renderNoCto(); return; }
-    if (inflight) return;
+    if (inflight) { refreshAgain = true; return; }
     inflight = true;
     const requestedId = agentId;
     try {
@@ -304,6 +305,7 @@ export function mountCto({ view, badge }) {
       }
     } finally {
       inflight = false;
+      if (refreshAgain) { refreshAgain = false; if (active) refresh(); }
     }
   }
 
@@ -311,8 +313,7 @@ export function mountCto({ view, badge }) {
     const merged = mergeThread(transcript, messages).slice(-CAP);
     if (pending) merged.push(pending);
 
-    const sig = merged.length + '|' + shown + '|' + expanded.size + ':' + expandedText.size + '|' +
-      (merged.length ? merged[merged.length - 1].key + ':' + String(merged[merged.length - 1].text).length : '');
+    const sig = JSON.stringify([shown, [...expanded], [...expandedText], merged]);
     if (sig === lastSig) return;
     lastSig = sig;
 

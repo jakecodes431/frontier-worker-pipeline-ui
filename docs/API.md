@@ -112,6 +112,10 @@ a charge. Worker dollar values are also price-sheet estimates; no billing API is
 | GET | `/api/config` | | `PublicConfig` |
 | GET | `/api/state` | | `{ agents: Agent[], usage: UsageSummary, config: PublicConfig }` |
 | GET | `/api/usage` | | `UsageSummary` |
+| GET | `/api/budget` | | `Budget` (see [Budget](#budget)) |
+| POST | `/api/budget` | `{ dailyUsd: number \| null }` | `Budget` after saving; `400` for any other value |
+| GET | `/api/claude-usage` | | `{ limits, settings, note }` (see [Claude usage connection](#claude-usage-connection)) |
+| POST | `/api/directories/pick` | `{ initialPath? }` | folder-picker result (see [`POST /api/directories/pick`](#post-apidirectoriespick)) |
 | GET | `/api/agents` | | `Agent[]` (flat; build the tree from `parentId`) |
 | POST | `/api/agents` | see below | `201` + `Agent`, or `400 { error }` naming the field that is wrong |
 | GET | `/api/agents/:id` | | `{ agent, messages, events, children: Agent[] }` (refreshes usage first; `events` capped at 200) |
@@ -155,8 +159,7 @@ for a conflict); only an unexpected failure reaches `500 { error }`.
   "worktree": { "repo": "/abs/repo", "branch": "optional", "base": "optional base ref" },
   "sessionId": "…",               // external: a real session id or absolute transcript path; native claude/codex get a fresh uuid. Never invent one.
   "status": "running",            // external only
-  "autoStart": true,              // false creates the record without spawning
-  "id": "…"                       // optional explicit id
+  "autoStart": true               // false creates the record without spawning
 }
 ```
 
@@ -181,7 +184,7 @@ order, and each names the field it refused:
 | no `name` | `name is required` |
 | `name` over 200 characters | `name is too long (… the maximum is 200)` |
 | no `task` | `task is required` |
-| `task` over 4000 characters | `task is too long …` |
+| `task` over 2000 characters | `task is too long …` |
 | neither `cwd` nor `worktree.repo` | `cwd or worktree.repo is required` |
 | `cwd` that is not there | `cwd does not exist: <path>` |
 | `role` outside the enum | `unknown role "…" — one of cto, orchestrator, worker` |
@@ -318,6 +321,93 @@ operator has not typed a path; it is never a path baked into the source.
 Usage is refreshed from disk on `GET /api/agents/:id` and on a ~5s server tick
 that also re-broadcasts state and marks agents whose process has disappeared as
 `stopped`.
+
+### Budget
+
+Operator-set daily cap on **measured DeepSeek spend** (see `server/budget.js`):
+
+```json
+{ "dailyUsd": 10, "day": "2026-09-16", "spentUsd": 4.1, "remainingUsd": 5.9, "percentUsed": 41 }
+```
+
+- `GET /api/budget` reads the stored cap and today's measured spend.
+- `POST /api/budget` with `{ "dailyUsd": <finite number > 0 and <= 1000000> }`
+  stores it; `{ "dailyUsd": null }` clears it; any other value is `400` with the
+  reason. Both verbs answer with the same payload.
+- The value lives in `<dataDir>/budget.json` (`CR_DATA_DIR` moves it) and is
+  re-read on every request, so a hand edit is picked up without a restart. An
+  absent, unreadable, corrupt or out-of-range file reads as unset (`dailyUsd:
+  null`, with `remainingUsd`/`percentUsed` also `null`) — a broken file must not
+  invent a limit.
+
+**Tracking aid, not enforcement.** Passing `dailyUsd` never pauses, kills or
+refuses an agent; it only lets the dashboard show the proportion used. The
+control room does not meter or hard-stop provider spend.
+
+### Claude usage connection
+
+`GET /api/claude-usage` returns the latest normalized Claude plan observation
+plus a ready-to-apply statusLine setting:
+
+```json
+{
+  "limits": { "observedAt": "ISO", "primary": { "used_percent": 25, "window_minutes": 300, "resets_at": 2000000000 },
+              "secondary": { "used_percent": 55, "window_minutes": 10080, "resets_at": null } },
+  "settings": { "statusLine": { "type": "command", "command": "node \"<repo>/scripts/claude-statusline.mjs\" \"<dataDir>\"" } },
+  "note": "Managed Claude sessions connect automatically. For an existing session, add this statusLine setting to Claude Code settings, preserving other settings. Usage appears after an API response on a supported plan."
+}
+```
+
+- `limits` is the five-hour (`primary`) / seven-day (`secondary`) observation
+  read from `<dataDir>/claude-usage.json`, or `null` before anything is seen.
+  This is an account observation Claude Code itself reports, not a live quota
+  query, and not this agent's private allowance. A window is omitted when its
+  `used_percentage` is missing, non-finite or outside `0`–`100`; a measured `0`
+  is kept as `0`, and `resets_at` is normalized to the documented Unix epoch
+  seconds (a legacy millisecond or ISO-8601 value is converted, an unusable one
+  becomes `null`). A `404` from this route means the running server predates the
+  endpoint: restart it. The UI reports that as its own state and never as empty
+  or 0% usage.
+- That file is written by `scripts/claude-statusline.mjs`, run by Claude Code as
+  its statusLine with the documented plan-usage payload on stdin. Only the
+  percentages and reset times are kept; **no credentials or session id are
+  stored**.
+- The statusLine command embeds the server's own `dataDir`, so the server and the
+  Claude session must share one `CR_DATA_DIR` for the hub to see the file.
+  Managed Claude sessions are started with this setting automatically; an
+  existing session needs it added to its Claude Code settings, preserving the
+  rest. `CR_CONFIG_DIR` changes only where `runtimes.json` / `pricing.json` /
+  `protocol.md` are read, and `CR_PORT` changes only where the hub listens — see
+  [Environment](#environment).
+
+### `POST /api/directories/pick`
+
+Open the native folder chooser for the New-agent form. The dialog is **only ever
+opened by an explicit operator click**; there is no non-interactive or automated
+fallback. Body: `{ "initialPath"?: "<absolute directory>" }`.
+
+| Case | Result |
+|---|---|
+| a directory is chosen | `200 { path: "<absolute existing directory>" }` |
+| the dialog is cancelled | `200 { path: null }` — not an error |
+| `initialPath` present and not a string | `400 { error: "initialPath must be a directory path" }`, **before** any dialog can open |
+| a picker is already open | `409 { path: null, error, code: "EBUSY" }` |
+| the picker does not answer in time | `504 { path: null, error, code: "ETIMEDOUT" }` |
+| platform is not Windows | `501 { path: null, error, code: "ENOTSUP" }` — type the path instead |
+| the answer is not an existing absolute directory | `400 { path: null, error, code: "EINVALIDPATH" }` |
+| the picker could not start / failed | `500 { path: null, error, code: "ESPAWN" \| "EFAILED" }` |
+
+A *string* `initialPath` is deliberately **not** rejected by the HTTP guard: an
+unusable one (relative, stale or not a directory) is ignored and the dialog opens
+at its default, so a path left over in the form cannot block picking a new
+folder. `null` or an omitted `initialPath` is valid. The start path travels as
+`CR_PICKER_INITIAL` environment data — never as command text — and a picker that
+is already open prevents a second process from being spawned. A non-Windows host
+returns `501` without spawning anything.
+
+Importing a previous data directory is an offline script, not an endpoint:
+`node scripts/import-history.mjs <source-data-dir> <destination-data-dir>` — see
+the README.
 
 ---
 

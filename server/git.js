@@ -1,6 +1,7 @@
 import { execFileSync, execFile } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
+import crypto from 'node:crypto';
 import { config } from './config.js';
 
 // git diff --no-index needs the platform's null device; NUL only exists on Windows.
@@ -25,7 +26,7 @@ export function createWorktree(repo, name, branch, base) {
   const wtDir = path.join(repo, config.worktreeDir || '.worktrees');
   fs.mkdirSync(wtDir, { recursive: true });
   const stamp = new Date().toISOString().slice(5, 16).replace(/[-T:]/g, '');
-  const leaf = `${slug(name)}-${stamp}`;
+  const leaf = `${slug(name)}-${stamp}-${crypto.randomBytes(3).toString('hex')}`;
   const wtPath = path.join(wtDir, leaf);
   branch = branch || `${config.worktreeBranchPrefix || 'cr/'}${leaf}`;
   if (!base) {
@@ -105,9 +106,11 @@ export function readFile(dir, rel) {
   if (!rel) throw coded('a ?path= query parameter is required', 400);
   if (missingDir(dir)) throw coded(`the folder this agent ran in no longer exists: ${dir || '(none)'}`, 404);
   const abs = path.resolve(dir, rel);
-  if (!abs.startsWith(path.resolve(dir))) throw coded('path escapes the agent directory', 400);
+  const inside = (root, file) => { const relative = path.relative(root, file); return relative !== '..' && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative); };
+  if (!inside(path.resolve(dir), abs)) throw coded('path escapes the agent directory', 400);
   let st;
   try { st = fs.statSync(abs); } catch { throw coded(`no such file in this agent's folder: ${rel}`, 404); }
+  if (!inside(fs.realpathSync(dir), fs.realpathSync(abs))) throw coded('path escapes the agent directory through a link', 400);
   if (st.isDirectory()) throw coded(`${rel} is a directory`, 400);
   if (st.size > 2 * 1024 * 1024) return { path: rel, content: `(file is ${st.size} bytes; too large to display)`, truncated: true };
   try {

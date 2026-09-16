@@ -1,0 +1,136 @@
+/* ==========================================================================
+   Choose LLM handoff — scoped styles.
+
+   Loaded by ui/index.html and deliberately narrow: every rule below names a
+   class this feature owns (`.handoff-*`, `.dd-*`, `.modal-close-btn`), so it
+   cannot restyle the rest of the app. Colours, radii and lifts are the tokens
+   from ui/styles.css — the modal's own design system, not new values.
+   ========================================================================== */
+
+/* ---- provider / effort popup -------------------------------------------- */
+
+.dd {
+  position: relative;
+  min-width: 0;
+  width: 100%;
+}
+
+.dd-trigger {
+  appearance: none;
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  width: 100%; min-width: 0; min-height: 36px;
+  padding: 7px 11px;
+  border: 1px solid var(--control-line);
+  border-radius: var(--r-control);
+  background: var(--ground);
+  color: var(--ink);
+  font: inherit; font-size: 13.5px; text-align: left;
+  cursor: pointer;
+  transition: border-color var(--fast) var(--ease), box-shadow var(--fast) var(--ease);
+}
+.dd-trigger:hover:not(:disabled) { border-color: var(--ink); }
+.dd-trigger:focus-visible { outline: 2px solid var(--gem-deep); outline-offset: 1px; }
+.dd-trigger[aria-expanded="true"] { border-color: var(--ink); box-shadow: 0 0 0 3px var(--cave); }
+.dd-trigger:disabled { cursor: not-allowed; background: var(--ground-sunk); color: var(--ink-3); border-color: var(--rule); }
+
+.dd-value {
+  min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+/* The same chevron the native control draws, so the two read as one family. */
+.dd-arrow {
+  flex: 0 0 auto; width: 12px; height: 12px;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'%3E%3Cpath d='M3 4.5 6 8l3-3.5' fill='none' stroke='%2355534F' stroke-width='1.4' stroke-linecap='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat; background-position: center; background-size: 12px;
+  transition: transform var(--fast) var(--ease);
+}
+.dd-trigger[aria-expanded="true"] .dd-arrow { transform: rotate(180deg); }
+
+.dd-list {
+  position: absolute; z-index: 6;
+  left: 0; right: 0; top: calc(100% + 4px);
+  margin: 0; padding: 4px;
+  list-style: none;
+  max-height: 220px; overflow-y: auto;
+  background: var(--plate-raised);
+  border: 1px solid var(--rule-strong);
+  border-radius: var(--r-inner);
+  box-shadow: var(--lift-3);
+}
+.dd-list:focus-visible { outline: 2px solid var(--gem-deep); outline-offset: 1px; }
+
+.dd-option {
+  padding: 7px 10px;
+  border-radius: 6px;
+  font-size: 13.5px; color: var(--ink-2);
+  cursor: pointer;
+}
+.dd-option[data-active="true"] { background: var(--cave); color: var(--ink); }
+.dd-option[aria-selected="true"] { color: var(--ink); font-weight: 600; }
+.dd-option[aria-selected="true"]::after { content: "✓"; float: right; color: var(--gem-ink); }
+.dd-option:hover { background: var(--plate); color: var(--ink); }
+
+/* ---- dialog chrome ------------------------------------------------------ */
+
+/* A real square button, not the text "Esc". Sizing is repeated inline in
+   newagent.js so the control keeps its hit area even if this sheet is absent. */
+.modal-close-btn {
+  flex: 0 0 auto;
+  border: 1px solid transparent;
+  border-radius: var(--r-control);
+  color: var(--ink-2);
+}
+.modal-close-btn:hover { background: var(--plate); color: var(--ink); }
+.modal-close-btn:focus-visible { outline: 2px solid var(--gem-deep); outline-offset: 1px; }
+.modal-close-glyph { font-size: 15px; line-height: 1; }
+
+.handoff-modal .modal-body { min-width: 0; }
+
+/* The live-session refusal is the one thing the operator must act on, so it
+   sits directly above the fields and reads as a sentence, not a badge. */
+.handoff-notice {
+  margin: 0 0 14px;
+  border: 1px solid rgba(181, 71, 8, .28);
+}
+.handoff-notice[hidden] { display: none; }
+
+/* ---- checkbox row ------------------------------------------------------- */
+
+.handoff-check,
+.form-check {
+  display: flex; align-items: flex-start; gap: 9px;
+  cursor: pointer;
+  padding: 4px 0;
+  border-radius: var(--r-control);
+}
+.handoff-check input,
+.form-check input {
+  flex: 0 0 auto;
+  width: 17px; height: 17px; min-height: 0;
+  margin: 1px 0 0;
+  accent-color: var(--ink);
+  cursor: pointer;
+}
+.handoff-check input:focus-visible,
+.form-check input:focus-visible { outline: 2px solid var(--gem-deep); outline-offset: 2px; }
+.check-copy { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.check-text { font-size: 13.5px; font-weight: 500; color: var(--ink); }
+.check-hint { font-size: 12px; color: var(--ink-3); line-height: 1.45; }
+
+/* ---- wrapping ----------------------------------------------------------- */
+
+/* At narrow widths the modal already collapses .form-grid to one column.
+   These rules make sure the dialog itself never overflows and the actions
+   wrap under the fields instead of being stranded off-screen. */
+.handoff-modal { width: min(720px, 100%); }
+.handoff-modal .form-grid,
+.handoff-modal .field { min-width: 0; }
+.handoff-modal .modal-foot { flex-wrap: wrap; }
+.handoff-foot .btn { min-width: 0; }
+.handoff-foot { justify-content: flex-end; }
+
+@media (max-width: 480px) {
+  .handoff-foot { justify-content: stretch; }
+  .handoff-foot .btn { flex: 1 1 auto; }
+  .handoff-modal .modal-body { padding: 16px; }
+}

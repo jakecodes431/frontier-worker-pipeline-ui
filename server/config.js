@@ -98,14 +98,17 @@ export function priceFor(model) {
 }
 
 /** USD for a usage bucket at a given model's price sheet. */
-export function costOf(usage, model) {
+export function costOf(usage, model, requestInputTokens = 0) {
   const p = priceFor(model);
   if (!p) return 0;
+  const long = p.longContextThreshold && requestInputTokens > p.longContextThreshold;
+  const inputMultiplier = long ? (p.longContextInputMultiplier || 1) : 1;
+  const outputMultiplier = long ? (p.longContextOutputMultiplier || 1) : 1;
   return (
-    (usage.inputTokens || 0) * p.input +
-    (usage.cacheReadTokens || 0) * p.cacheRead +
-    (usage.cacheWriteTokens || 0) * p.cacheWrite +
-    (usage.outputTokens || 0) * p.output
+    (usage.inputTokens || 0) * p.input * inputMultiplier +
+    (usage.cacheReadTokens || 0) * p.cacheRead * inputMultiplier +
+    (usage.cacheWriteTokens || 0) * p.cacheWrite * inputMultiplier +
+    (usage.outputTokens || 0) * p.output * outputMultiplier
   ) / 1e6;
 }
 
@@ -125,7 +128,8 @@ export function localDay(d = new Date()) {
 
 export function publicConfig() {
   return {
-    runtimes: Object.fromEntries(Object.entries(config.runtimes).map(([k, v]) => [k, { label: v.label, defaults: v.defaults }])),
+    runtimes: Object.fromEntries(Object.entries(config.runtimes).map(([k, v]) => [k, { label: v.label, defaults: v.defaults, efforts: v.efforts }])),
+    defaultRuntime: config.frontierRuntime || (config.runtimes.codex ? 'codex' : 'claude'),
     pricing,
     crBin: CR_BIN,
     // Sensible starting points for the New agent form — never a path baked into

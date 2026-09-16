@@ -92,7 +92,10 @@ export function readCodexTranscript(file, { withMessages = false } = {}) {
         // Sum only deltas between cumulative snapshots, including repeated snapshots.
         const model = resolveModel(out.model) || 'unknown';
         const bucket = out.byModel[model] || (out.byModel[model] = zero());
-        for (const k of tokenKeys) { const delta = Math.max(0, current[k] - prior[k]); bucket[k] += delta; out.usage[k] += delta; }
+        const deltaUsage = {};
+        for (const k of tokenKeys) { const delta = Math.max(0, current[k] - prior[k]); deltaUsage[k] = delta; bucket[k] += delta; out.usage[k] += delta; }
+        const requestInput = p.info?.last_token_usage?.input_tokens ?? (deltaUsage.inputTokens + deltaUsage.cacheReadTokens + deltaUsage.cacheWriteTokens);
+        bucket.costUsd += costOf(deltaUsage, model, requestInput);
         for (const k of tokenKeys) prior[k] = Math.max(prior[k], current[k]);
       } else if (p.type === 'task_started' || p.type === 'user_message') {
         out.lastRole = 'user'; out.lastStop = null;
@@ -127,7 +130,6 @@ export function readCodexTranscript(file, { withMessages = false } = {}) {
   for (const [model, bucket] of Object.entries(out.byModel)) {
     bucket.totalTokens = tokenKeys.reduce((n, k) => n + bucket[k], 0);
     bucket.pricingKnown = !!priceFor(model);
-    bucket.costUsd = costOf(bucket, model);
     bucket.fableEquivalentUsd = costOf(bucket, pricing.fableEquivalentModel);
     out.usage.costUsd += bucket.costUsd;
     out.usage.fableEquivalentUsd += bucket.fableEquivalentUsd;

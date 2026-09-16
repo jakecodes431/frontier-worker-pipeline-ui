@@ -1,0 +1,104 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="980" height="660" viewBox="0 0 980 660" role="img" aria-labelledby="title desc">
+  <title id="title">Agent delegation in the control room</title>
+  <desc id="desc">The CTO creates one task-specific orchestrator. The orchestrator sends every implementation task to its own DeepSeek worker working in its own git worktree. The orchestrator reviews each worker diff, runs the proof command and integrates the change, then reports upward. A worker or provider failure is reported upward with the error, and is never silently taken over.</desc>
+
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#334155"/>
+    </marker>
+    <marker id="arrow-fail" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#b91c1c"/>
+    </marker>
+    <marker id="arrow-report" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#0f766e"/>
+    </marker>
+  </defs>
+
+  <style>
+    .t { font-family: system-ui, sans-serif; }
+    .h { font-size: 15px; font-weight: 700; fill: #0f172a; }
+    .s { font-size: 11px; fill: #475569; }
+    .e { font-size: 11px; fill: #334155; }
+    .ef { font-size: 11px; fill: #b91c1c; }
+    .box { fill: #f8fafc; stroke: #334155; stroke-width: 1.5; }
+    .box-fail { fill: #fef2f2; stroke: #b91c1c; stroke-width: 1.5; }
+    .edge { fill: none; stroke: #334155; stroke-width: 1.5; }
+    .edge-fail { fill: none; stroke: #b91c1c; stroke-width: 1.5; stroke-dasharray: 6 4; }
+    .edge-report { fill: none; stroke: #0f766e; stroke-width: 1.5; stroke-dasharray: 6 4; }
+  </style>
+
+  <rect x="0" y="0" width="980" height="660" fill="#ffffff"/>
+
+  <text class="t" x="490" y="34" text-anchor="middle" font-size="20" font-weight="700" fill="#0f172a">Agent delegation — the control-room default</text>
+  <text class="t" x="490" y="56" text-anchor="middle" font-size="12" fill="#475569">CTO → task-specific orchestrator → one DeepSeek worker per implementation task → review/integrate → report</text>
+  <line x1="30" y1="72" x2="950" y2="72" stroke="#e2e8f0" stroke-width="1"/>
+
+  <!-- CTO -->
+  <rect class="box" x="190" y="88" width="220" height="54" rx="10"/>
+  <text class="t h" x="300" y="111" text-anchor="middle">CTO</text>
+  <text class="t s" x="300" y="130" text-anchor="middle">owns the task and the outcome</text>
+
+  <!-- Orchestrator -->
+  <rect class="box" x="170" y="188" width="260" height="66" rx="10"/>
+  <text class="t h" x="300" y="214" text-anchor="middle">Task-specific orchestrator</text>
+  <text class="t s" x="300" y="234" text-anchor="middle">one per task, created by the CTO</text>
+
+  <!-- Workers -->
+  <rect class="box" x="70" y="310" width="200" height="88" rx="10"/>
+  <text class="t h" x="170" y="336" text-anchor="middle" font-size="14">DeepSeek worker</text>
+  <text class="t s" x="170" y="358" text-anchor="middle">implementation task A</text>
+  <text class="t s" x="170" y="378" text-anchor="middle">its own git worktree</text>
+
+  <rect class="box" x="330" y="310" width="200" height="88" rx="10"/>
+  <text class="t h" x="430" y="336" text-anchor="middle" font-size="14">DeepSeek worker</text>
+  <text class="t s" x="430" y="358" text-anchor="middle">implementation task B</text>
+  <text class="t s" x="430" y="378" text-anchor="middle">its own git worktree</text>
+
+  <!-- Review + integrate -->
+  <rect class="box" x="160" y="460" width="280" height="68" rx="10"/>
+  <text class="t h" x="300" y="486" text-anchor="middle">Review + integrate</text>
+  <text class="t s" x="300" y="506" text-anchor="middle">read the worker diff, run the proof</text>
+  <text class="t s" x="300" y="523" text-anchor="middle">integrate one branch at a time</text>
+
+  <!-- Report -->
+  <rect class="box" x="190" y="570" width="220" height="56" rx="10"/>
+  <text class="t h" x="300" y="594" text-anchor="middle">Report upward</text>
+  <text class="t s" x="300" y="613" text-anchor="middle">to the CTO — checkpoints + final</text>
+
+  <!-- Failure -->
+  <rect class="box-fail" x="650" y="308" width="290" height="96" rx="10"/>
+  <text class="t h" x="795" y="334" text-anchor="middle" font-size="14" fill="#b91c1c">Worker / provider failure</text>
+  <text class="t ef" x="795" y="356" text-anchor="middle">reported upward with the failing agent,</text>
+  <text class="t ef" x="795" y="376" text-anchor="middle">the error and any missing proof —</text>
+  <text class="t ef" x="795" y="396" text-anchor="middle">never silently taken over</text>
+
+  <!-- Normal flow edges -->
+  <path class="edge" d="M300,142 L300,184" marker-end="url(#arrow)"/>
+  <text class="t e" x="310" y="170" text-anchor="start">creates one task-specific orchestrator</text>
+
+  <path class="edge" d="M300,254 L300,282 L170,282 L170,306" marker-end="url(#arrow)"/>
+  <path class="edge" d="M300,254 L300,282 L430,282 L430,306" marker-end="url(#arrow)"/>
+  <text class="t e" x="310" y="272" text-anchor="start">one DeepSeek worker per implementation task</text>
+
+  <path class="edge" d="M170,398 L170,430"/>
+  <path class="edge" d="M430,398 L430,430"/>
+  <line class="edge" x1="170" y1="430" x2="430" y2="430"/>
+  <path class="edge" d="M300,430 L300,456" marker-end="url(#arrow)"/>
+  <text class="t e" x="310" y="448" text-anchor="start">review the diff, run the proof</text>
+
+  <path class="edge" d="M300,528 L300,566" marker-end="url(#arrow)"/>
+  <text class="t e" x="310" y="552" text-anchor="start">verified change</text>
+
+  <!-- Report returns to the CTO -->
+  <path class="edge-report" d="M190,598 L50,598 L50,115 L186,115" marker-end="url(#arrow-report)"/>
+  <text class="t e" x="56" y="612" text-anchor="start" fill="#0f766e">report</text>
+
+  <!-- Failure is reported, never absorbed -->
+  <path class="edge-fail" d="M530,354 L646,354" marker-end="url(#arrow-fail)"/>
+  <text class="t ef" x="560" y="344" text-anchor="start">on failure</text>
+  <path class="edge-fail" d="M795,308 L795,115 L414,115" marker-end="url(#arrow-fail)"/>
+  <text class="t ef" x="600" y="106" text-anchor="middle">failure is reported upward — never silently absorbed</text>
+
+  <text class="t" x="30" y="648" font-size="10" fill="#64748b">Control-room delegation default (config/protocol.md): one implementation task, one worker; failures are reported, not taken over.</text>
+</svg>

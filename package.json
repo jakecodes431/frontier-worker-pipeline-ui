@@ -29,7 +29,8 @@
     "start": "node server/index.js",
     "dev": "node --watch server/index.js",
     "cr": "node bin/cr.js",
-    "check": "node --check server/index.js && node --check server/config.js && node --check server/db.js && node --check server/git.js && node --check server/pty.js && node --check server/usage.js && node --check server/adapters/index.js && node --check bin/cr.js && node --check scripts/launch-orchestrator.mjs && node --check scripts/smoke.mjs && node scripts/smoke.mjs"
+    "check": "node scripts/smoke.mjs && node scripts/runtime-tests.mjs && node scripts/ui-tests.mjs && node scripts/limit-tests.mjs && node scripts/lifecycle-tests.mjs && node scripts/history-tests.mjs && node scripts/budget-tests.mjs && node scripts/usage-connection-tests.mjs && node scripts/directory-picker-tests.mjs && node scripts/delivery-tests.mjs",
+    "test": "npm run check"
   },
   "dependencies": {
     "@lydell/node-pty": "1.2.0-beta.15",

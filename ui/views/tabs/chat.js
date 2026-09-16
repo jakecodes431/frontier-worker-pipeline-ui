@@ -46,6 +46,7 @@ export function createChatTab(ctx) {
   let timer = 0;
   let active = false;
   let inflight = false;
+  let refreshAgain = false;
   let transcript = [];
   let messages = [];
   let pending = null;
@@ -67,7 +68,7 @@ export function createChatTab(ctx) {
   grow();
 
   async function refresh() {
-    if (inflight) return;
+    if (inflight) { refreshAgain = true; return; }
     inflight = true;
     try {
       const [chat, msgs, inbox] = await Promise.all([
@@ -86,6 +87,7 @@ export function createChatTab(ctx) {
       }
     } finally {
       inflight = false;
+      if (refreshAgain) { refreshAgain = false; if (active) refresh(); }
     }
   }
 
@@ -93,8 +95,7 @@ export function createChatTab(ctx) {
     const merged = mergeThread(transcript, messages).slice(-CAP);
     if (pending) merged.push(pending);
 
-    const last = merged[merged.length - 1];
-    const sig = merged.length + '|' + shown + '|' + expanded.size + ':' + expandedText.size + '|' + (last ? last.key + ':' + String(last.text).length : '');
+    const sig = JSON.stringify([shown, [...expanded], [...expandedText], merged]);
     if (sig === lastSig) return;
     lastSig = sig;
 

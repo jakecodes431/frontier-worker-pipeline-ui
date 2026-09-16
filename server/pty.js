@@ -17,7 +17,7 @@ export class PtyManager extends EventEmitter {
     this.procs = new Map(); // id -> { pty, lastOutputAt, cols, rows, stream }
   }
 
-  spawn(id, { command, args, cwd, env, cols = 120, rows = 36 }) {
+  async spawn(id, { command, args, cwd, env, cols = 120, rows = 36 }) {
     if (this.procs.has(id)) throw new Error(`agent ${id} already has a pty`);
     const p = nodePty.spawn(command, args, { name: 'xterm-256color', cols, rows, cwd, env, useConpty: true });
     const logPath = path.join(SCROLLBACK_DIR, `${id}.log`);
@@ -31,10 +31,16 @@ export class PtyManager extends EventEmitter {
     });
     p.onExit(({ exitCode, signal }) => {
       stream.end();
+      if (this.procs.get(id) !== rec) return;
       this.procs.delete(id);
       this.emit('exit', id, { exitCode, signal });
     });
-    return { pid: p.pid, logPath };
+    // ConPTY starts asynchronously: pid is 0 until its pipe handshake finishes.
+    // Persisting that initial value makes process-tree stop and crash recovery
+    // impossible, even though the terminal appears to work.
+    for (let i = 0; !p.pid && this.has(id) && i < 250; i++) await new Promise(r => setTimeout(r, 20));
+    if (!p.pid && this.has(id)) { this.kill(id); throw new Error('terminal launch timed out before a process id was available'); }
+    return { pid: p.pid, logPath, exited: !this.has(id) };
   }
 
   has(id) { return this.procs.has(id); }
@@ -49,7 +55,7 @@ export class PtyManager extends EventEmitter {
 
   resize(id, cols, rows) {
     const r = this.procs.get(id);
-    if (!r || !cols || !rows) return;
+    if (!r || !Number.isInteger(cols) || !Number.isInteger(rows) || cols < 2 || rows < 1 || cols > 500 || rows > 200) return;
     if (r.cols === cols && r.rows === rows) return;
     r.cols = cols; r.rows = rows;
     try { r.pty.resize(cols, rows); } catch { /* process may be exiting */ }
@@ -60,6 +66,16 @@ export class PtyManager extends EventEmitter {
     if (!r) return false;
     try { r.pty.kill(); } catch { /* already gone */ }
     return true;
+  }
+
+  async stop(id) {
+    if (!this.has(id)) return;
+    await new Promise((resolve, reject) => {
+      const onExit = exited => { if (exited === id) { clearTimeout(timer); this.off('exit', onExit); resolve(); } };
+      const timer = setTimeout(() => { this.off('exit', onExit); reject(new Error('terminal did not stop; retry Stop before restarting')); }, 5000);
+      this.on('exit', onExit);
+      this.kill(id);
+    });
   }
 
   scrollback(id) {

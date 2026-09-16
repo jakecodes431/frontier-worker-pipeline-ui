@@ -78,9 +78,10 @@ try {
   test('default launch uses interactive CLI and leaves model and effort to user config', () => {
     const b = adapters.codex.build(agent, 4800);
     assert.equal(b.command, 'codex'); assert.ok(b.args.includes('--no-alt-screen'));
-    assert.ok(!b.args.includes('--model')); assert.ok(!b.args.includes('-c')); assert.ok(!b.args.includes('exec'));
+    assert.ok(!b.args.includes('--model')); assert.ok(!b.args.some(a => a.startsWith('model_reasoning_effort='))); assert.ok(!b.args.includes('exec'));
+    assert.ok(b.args.includes('features.current_time_reminder.enabled=false'));
     assert.deepEqual(b.args.slice(b.args.indexOf('--sandbox'), b.args.indexOf('--sandbox') + 2), ['--sandbox', 'workspace-write']);
-    assert.equal(b.args.at(-1), agent.prompt);
+    assert.ok(b.args.includes(agent.prompt));
   });
   test('resume selects the exact UUID and forwards explicit model/effort', () => {
     const b = adapters.codex.build({ ...agent, sessionId: id, model: 'gpt-fixture', effort: 'high', permissionMode: 'read-only' }, 4800, { resume: true });
