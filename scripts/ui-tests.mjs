@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { usageCost, tokens } from '../ui/lib/format.js';
-import { runtimeNames, runtimeEfforts } from '../ui/views/newagent.js';
+import { runtimeNames, runtimeEfforts, continuationProvider } from '../ui/views/newagent.js';
 import { ctoAgent } from '../ui/views/cto.js';
 import { setState } from '../ui/lib/store.js';
 import api, { ApiError } from '../ui/lib/api.js';
@@ -17,6 +17,9 @@ assert.deepEqual(runtimeNames(config), ['codex', 'external']);
 assert.deepEqual(runtimeEfforts(config, 'codex'), ['low', 'xhigh']);
 assert.deepEqual(runtimeEfforts(config, 'external'), []);
 assert.ok(runtimeNames().includes('codex'));
+assert.equal(continuationProvider({ runtime: 'codex', transcriptRuntime: 'claude' }, ['claude', 'codex']), 'claude');
+assert.equal(continuationProvider({ runtime: 'external', transcriptRuntime: 'codex' }, ['claude', 'codex']), 'claude');
+assert.equal(continuationProvider({ runtime: 'claude' }, ['claude', 'codex']), 'codex');
 
 // Keeping old CTO history must not leave its successor hidden in the CTO view.
 setState({ agents: [

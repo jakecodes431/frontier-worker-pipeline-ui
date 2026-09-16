@@ -6,17 +6,15 @@
 // Rebuilt wholesale on each `usage` / `agents` event; it holds no live widgets
 // (the terminal and the open drawer live elsewhere, untouched by this).
 //
-// LABELLING IS LOAD-BEARING. Claude/Fable dollars are API-equivalent estimates
-// computed from token counts — those sessions run on a Claude plan and are
-// never invoiced per token. Only DeepSeek figures are real money. Every money
-// panel therefore carries its basis.
+// Costs are estimates calculated from reported usage and configured prices.
+// They are not invoices or subscription charges; missing prices stay visible.
 
 import { h, replace, qs } from '../lib/dom.js';
 import * as f from '../lib/format.js';
 import { store, getUsage, getAgents, getConfig, isLoaded, getLoadError } from '../lib/store.js';
 
 const PLAN_BASIS = 'API-equivalent estimate; not a subscription charge';
-const ACTUAL_BASIS = 'actual API cost';
+const API_BASIS = 'API cost estimate from configured prices';
 
 let root = null;
 let frame = 0;
@@ -105,7 +103,7 @@ function panel(width, title, value, opts = {}) {
 }
 
 function basisLine(kind) {
-  return kind === 'actual' ? ACTUAL_BASIS : PLAN_BASIS;
+  return kind === 'api' ? API_BASIS : PLAN_BASIS;
 }
 
 function meter(fraction, tone) {
@@ -326,7 +324,7 @@ function spendPlate(u) {
 const TIERS = [
   ['cto', 'CTO', 'estimate', 'no agent holds the cto role'],
   ['orchestrator', 'Orchestrators', 'estimate', 'no agent holds the orchestrator role'],
-  ['deepseek', 'DeepSeek workers', 'actual', 'nothing has run on the deepseek runtime'],
+  ['deepseek', 'DeepSeek workers', 'api', 'nothing has run on the deepseek runtime'],
   // Nothing is allowed to fall out of this list: an agent that is neither a
   // DeepSeek process nor a CTO/orchestrator (a Claude-run worker, an external
   // session with an unusual role) lands here rather than vanishing from the
@@ -347,8 +345,7 @@ function tierPlate(tiers, tierAgents) {
     all.map(([key, label, kind, what]) => {
       const t = tiers[key];
       const n = counts ? Number(counts[key]) || 0 : null;
-      const badge = h('span', { class: 'badge ' + (kind === 'actual' ? 'badge-actual' : 'badge-est') },
-        kind === 'actual' ? 'actual' : 'estimated');
+      const badge = h('span', { class: 'badge badge-est' }, 'estimated');
       // "Other" is only worth a panel when something is actually in it.
       if (key === 'other' && !n && !(t && t.totalTokens)) return null;
       if (!t || !t.totalTokens) {
@@ -479,15 +476,15 @@ function savingsPlate(sav) {
   const max = Math.max(actual, equiv, 1e-9);
   const ratio = (actual > 0 && equiv > 0)
     ? `${((1 - actual / equiv) * 100).toFixed(1)}% cheaper · ${(equiv / actual).toFixed(0)}× ratio`
-    : (equiv > 0 ? 'no metered DeepSeek spend recorded yet' : 'no DeepSeek work has run yet');
+    : (equiv > 0 ? 'no DeepSeek cost estimate recorded yet' : 'no DeepSeek work has run yet');
 
   const compare = h('div', { class: 'panel w-16' },
-    h('div', { class: 'panel-title' }, 'DeepSeek actual vs the same work on Fable',
+    h('div', { class: 'panel-title' }, 'DeepSeek estimate vs the same work on Fable',
       h('span', { class: 'badge badge-est' }, 'estimated')),
     h('div', { class: 'cmp' },
       h('div', null,
         h('div', { class: 'cmp-top' },
-          h('span', { class: 'cmp-name' }, 'DeepSeek — actual API cost'),
+          h('span', { class: 'cmp-name' }, 'DeepSeek — estimated API cost'),
           h('span', { class: 'cmp-val' }, f.usd(actual))),
         h('div', { class: 'cmp-bar' }, h('div', { class: 'cmp-fill', dataset: { tone: 'done' }, style: { width: ((actual / max) * 100).toFixed(2) + '%' } }))),
       h('div', null,
@@ -495,14 +492,14 @@ function savingsPlate(sav) {
           h('span', { class: 'cmp-name' }, 'Same work on Fable — API-equivalent'),
           h('span', { class: 'cmp-val' }, f.usd(equiv))),
         h('div', { class: 'cmp-bar' }, h('div', { class: 'cmp-fill', style: { width: ((equiv / max) * 100).toFixed(2) + '%' } })))),
-    h('div', { class: 'basis' }, sav.basis || 'DeepSeek usage re-priced at the Fable price sheet. The DeepSeek side is actual API cost; the Fable side is an estimate.'));
+    h('div', { class: 'basis' }, 'DeepSeek usage re-priced at the Fable price sheet. Both sides are estimates from configured prices.'));
 
   return plate('Savings', 'what the delegated work would have cost at the top tier', [
     panel('w-8', 'Saved by delegating to DeepSeek', money(sav.savedUsd), {
       badge: h('span', { class: 'badge badge-est' }, 'estimated'),
       sub: ratio,
       viz: meter(equiv > 0 ? (equiv - actual) / equiv : 0, 'done'),
-      basis: 'never billed — the avoided side would have run on the Claude plan',
+      basis: 'hypothetical comparison at configured API prices; not an invoice',
     }),
     compare,
   ]);

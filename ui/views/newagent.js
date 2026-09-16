@@ -13,6 +13,10 @@ const FALLBACK_RUNTIMES = ['claude', 'codex', 'deepseek', 'external'];
 const EFFORTS_BY_RUNTIME = { claude: ['low', 'medium', 'high', 'max'], codex: ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'], deepseek: ['low', 'medium', 'high'] };
 export function runtimeNames(cfg = {}) { return Object.keys(cfg.runtimes || {}).length ? Object.keys(cfg.runtimes) : FALLBACK_RUNTIMES; }
 export function runtimeEfforts(cfg, runtime) { return cfg.runtimes?.[runtime]?.efforts || EFFORTS_BY_RUNTIME[runtime] || []; }
+export function continuationProvider(agent, providers) {
+  const source = agent.runtime === 'external' ? agent.transcriptRuntime : agent.runtime;
+  return providers.find((runtime) => runtime !== source) || providers[0];
+}
 const ROLES = ['cto', 'orchestrator', 'worker'];
 const NAME_MAX = 200;
 const TASK_MAX = 2000;
@@ -256,7 +260,7 @@ export function openHandoff(agent) {
   const cfg = getConfig() || {};
   const providers = runtimeNames(cfg).filter((r) => ['claude', 'codex'].includes(r));
   const runtime = field('Continue with', h('select', { name: 'runtime' }, ...providers.map((r) => h('option', { value: r }, cfg.runtimes?.[r]?.label || r))));
-  runtime.input.value = providers.find((r) => r !== (agent.transcriptRuntime || agent.runtime)) || providers[0];
+  runtime.input.value = continuationProvider(agent, providers);
   const model = field('Model', h('input', { name: 'model', type: 'text', autocomplete: 'off' }));
   const effort = field('Effort', h('select', { name: 'effort' }));
   const start = h('input', { type: 'checkbox', id: 'handoff-start' });
