@@ -4,7 +4,7 @@
 // are merged by time with `mergeThread` from views/cto.js, so a worker's tab
 // and the CTO page are the same object at two sizes: avatar-led bubble runs,
 // tool calls as quiet pills rather than bubbles, reports from children as
-// ruled cards, and a one-bar composer with a round send button.
+// ruled cards, and Quartzi's one-bar composer with a round send button.
 
 import { h, replace, clear, toast } from '../../lib/dom.js';
 import * as f from '../../lib/format.js';
@@ -81,7 +81,9 @@ export function createChatTab(ctx) {
       render();
       renderInbox(Array.isArray(inbox) ? inbox : (inbox && Array.isArray(inbox.messages) ? inbox.messages : []));
     } catch (err) {
-      if (!list.childElementCount) replace(scroll, h('div', { class: 'error-box' }, 'Could not load chat: ' + err.message));
+      if (!list.childElementCount) {
+        replace(scroll, h('div', { class: 'error-box', role: 'alert', style: { margin: '14px' } }, 'Could not load chat: ' + err.message));
+      }
     } finally {
       inflight = false;
     }
@@ -101,12 +103,20 @@ export function createChatTab(ctx) {
 
     if (!merged.length) {
       const a = ctx.getAgent();
+      const finished = a && ['done', 'failed', 'stopped'].includes(a.status);
+      let why;
+      if (a && a.runtime === 'deepseek') {
+        why = finished
+          ? 'This worker finished without leaving a transcript the control room could parse. The Terminal tab holds its raw run, and Diff holds what it changed.'
+          : 'DeepSeek workers report through their stdout log, so this fills in once the process prints something. The Terminal tab has the raw run.';
+      } else if (a && a.runtime === 'external' && !a.sessionId) {
+        why = 'This session was registered without a session id, so there is no transcript to read. Add one to see its conversation here.';
+      } else {
+        why = 'Nothing has been said in this session yet. Anything you send lands in the agent’s inbox.';
+      }
       list.appendChild(h('div', { class: 'cto-empty' },
-        h('p', { class: 'cto-empty-title' }, 'No conversation yet'),
-        h('p', { class: 'cto-empty-body' },
-          a && a.runtime === 'deepseek'
-            ? 'DeepSeek workers report through their stdout log; if this stays empty, the Terminal tab has the raw run.'
-            : 'Nothing has been said in this session yet. Anything you send lands in the agent’s inbox.')));
+        h('p', { class: 'cto-empty-title' }, finished ? 'No transcript for this agent' : 'No conversation yet'),
+        h('p', { class: 'cto-empty-body' }, why)));
       return;
     }
 
@@ -244,7 +254,14 @@ export function createChatTab(ctx) {
       stickBottom = true;
       refresh();
       clearInterval(timer);
-      timer = setInterval(() => { if (active) refresh(); }, POLL_MS);
+      // Finished agents produce nothing new, and a hidden window has nobody
+      // reading it: neither is worth a transcript read every five seconds.
+      timer = setInterval(() => {
+        if (!active || document.hidden) return;
+        const a = ctx.getAgent();
+        if (a && ['done', 'failed', 'stopped'].includes(a.status)) return;
+        refresh();
+      }, POLL_MS);
       setTimeout(() => textarea.focus(), 0);
     },
     deactivate() { active = false; clearInterval(timer); timer = 0; },

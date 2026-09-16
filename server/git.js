@@ -35,8 +35,14 @@ export function createWorktree(repo, name, branch, base) {
   return { repo, branch, path: wtPath, base };
 }
 
+/** True when the agent's folder is gone (deleted worktree, pruned checkout). */
+export function missingDir(dir) {
+  return !dir || !fs.existsSync(dir);
+}
+
 export function diff(dir) {
-  if (!isRepo(dir)) return { diff: '', stat: `${dir} is not a git repository` };
+  if (missingDir(dir)) return { diff: '', stat: '', missing: true, message: `the folder this agent ran in no longer exists: ${dir || '(none)'}` };
+  if (!isRepo(dir)) return { diff: '', stat: '', notRepo: true, message: `${dir} is not a git repository, so there is no diff to show` };
   let stat = '', d = '';
   try { stat = git(dir, ['status', '--short', '--branch']); } catch (e) { stat = String(e.message); }
   try {
@@ -53,7 +59,7 @@ export function diff(dir) {
 }
 
 export function files(dir) {
-  if (!fs.existsSync(dir)) return { changed: [], tree: [] };
+  if (missingDir(dir)) return { changed: [], tree: [], missing: true, message: `the folder this agent ran in no longer exists: ${dir || '(none)'}` };
   const changed = [];
   if (isRepo(dir)) {
     try {
@@ -89,12 +95,26 @@ export function files(dir) {
   return { changed, tree };
 }
 
+function coded(message, code) {
+  const e = new Error(message);
+  e.code = code;
+  return e;
+}
+
 export function readFile(dir, rel) {
+  if (!rel) throw coded('a ?path= query parameter is required', 400);
+  if (missingDir(dir)) throw coded(`the folder this agent ran in no longer exists: ${dir || '(none)'}`, 404);
   const abs = path.resolve(dir, rel);
-  if (!abs.startsWith(path.resolve(dir))) throw new Error('path escapes agent directory');
-  const st = fs.statSync(abs);
-  if (st.size > 2 * 1024 * 1024) return { path: rel, content: `(file is ${st.size} bytes; too large to display)` };
-  return { path: rel, content: fs.readFileSync(abs, 'utf8') };
+  if (!abs.startsWith(path.resolve(dir))) throw coded('path escapes the agent directory', 400);
+  let st;
+  try { st = fs.statSync(abs); } catch { throw coded(`no such file in this agent's folder: ${rel}`, 404); }
+  if (st.isDirectory()) throw coded(`${rel} is a directory`, 400);
+  if (st.size > 2 * 1024 * 1024) return { path: rel, content: `(file is ${st.size} bytes; too large to display)`, truncated: true };
+  try {
+    return { path: rel, content: fs.readFileSync(abs, 'utf8') };
+  } catch (e) {
+    throw coded(`could not read ${rel}: ${e.message}`, 400);
+  }
 }
 
 export function commitLog(dir, n = 20) {

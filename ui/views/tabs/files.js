@@ -39,6 +39,17 @@ export function createFilesTab(ctx) {
     const tree = Array.isArray(res.tree) ? res.tree : [];
     clear(listEl);
 
+    // A worktree can be removed under a finished agent. Two empty lists look
+    // like a bug; the server tells us which it is, so say it.
+    if (res.missing) {
+      listEl.appendChild(h('div', { class: 'notice' },
+        h('h4', null, 'Working directory is gone'),
+        h('p', null, res.message || 'The folder this agent ran in no longer exists.'),
+        h('p', null, 'Its diff and files cannot be read. The transcript, events and terminal scrollback are still available in the other tabs.')));
+      viewerEl.textContent = 'No files to show.';
+      return;
+    }
+
     listEl.appendChild(h('div', { class: 'subhead' }, `Changed — ${changed.length}`));
     if (!changed.length) {
       listEl.appendChild(h('div', { class: 'empty', style: { padding: '12px' } }, 'No changed files.'));

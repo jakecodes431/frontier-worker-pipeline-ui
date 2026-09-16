@@ -27,10 +27,26 @@ function fable(u) {
   return costOf(u, pricing.fableEquivalentModel);
 }
 
+/**
+ * Parsed transcripts, keyed by file + mtime + size.
+ *
+ * A live CTO session's JSONL runs to megabytes and every 5s refresh — plus
+ * every chat poll — re-parsed the whole file. The transcript only changes when
+ * the CLI appends to it, so a parse is reused until mtime or size moves.
+ */
+const parseCache = new Map();
+const PARSE_CACHE_MAX = 24;
+
 /** Parse a Claude transcript. Returns { usage, byModel, messages, lastAssistantAt, lastStop }. */
 export function readClaudeTranscript(file, { withMessages = false } = {}) {
   const out = { usage: emptyUsage(), byModel: {}, messages: [], lastAssistantAt: null, lastStop: null, lastRole: null };
-  if (!fs.existsSync(file)) return out;
+  if (!file) return out;
+  let st;
+  try { st = fs.statSync(file); } catch { return out; }
+  const key = `${withMessages ? 'm' : 'u'}:${file}`;
+  const stamp = `${st.mtimeMs}:${st.size}`;
+  const hit = parseCache.get(key);
+  if (hit && hit.stamp === stamp) return hit.value;
   let text;
   try { text = fs.readFileSync(file, 'utf8'); } catch { return out; }
   const perMsg = new Map(); // message.id -> { model, usage }
@@ -76,6 +92,8 @@ export function readClaudeTranscript(file, { withMessages = false } = {}) {
   }
   finalize(out);
   if (withMessages) out.messages = out.messages.slice(-300);
+  if (parseCache.size >= PARSE_CACHE_MAX) parseCache.delete(parseCache.keys().next().value);
+  parseCache.set(key, { stamp, value: out });
   return out;
 }
 

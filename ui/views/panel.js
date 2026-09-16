@@ -58,13 +58,22 @@ export function mountPanel({ host, connection }) {
   store.on('agents', () => {
     if (!current) return;
     const agent = getAgent(current.id);
-    if (!agent) { close(); return; }
+    if (!agent) {
+      // Deleted (or lost) while its drawer was open: say so, don't just vanish.
+      const name = current.name || current.id;
+      const selfInflicted = current.removing;
+      close();
+      if (!selfInflicted) toast(`"${name}" is no longer in the fleet — its panel was closed.`, 'info', 6000);
+      return;
+    }
     if (current.extra) current.extra.update(agent);
     current.head.update(agent);
   });
 
+  // The modal claims Escape first (capture phase + preventDefault), so one
+  // press closes one layer.
   document.addEventListener('keydown', (ev) => {
-    if (ev.key === 'Escape' && current) { ev.preventDefault(); select(null); }
+    if (ev.key === 'Escape' && current && !ev.defaultPrevented) { ev.preventDefault(); select(null); }
   });
 }
 
@@ -80,12 +89,16 @@ export function open(agentId) {
   const body = h('div', { class: 'panel-body' });
   const root = h('div', { class: 'panel' }, head.el, body);
 
-  current = { id: agentId, root, body, ctx, tabs: new Map(), activeKey: null, head, extra: null };
+  const opener = document.activeElement;
+  current = { id: agentId, name: agent.name, root, body, ctx, tabs: new Map(), activeKey: null, head, extra: null, opener };
 
   replace(hostEl, root);
   hostEl.hidden = false;
   head.update(agent);
   setActive(DEFAULT_TAB);
+  // Focus lands on the drawer's own heading, so a keyboard user is inside the
+  // thing that just opened rather than still back in the tree.
+  head.focus();
 }
 
 export function close() {
@@ -94,9 +107,13 @@ export function close() {
     try { if (tab.deactivate) tab.deactivate(); } catch (e) { console.error(e); }
     try { if (tab.destroy) tab.destroy(); } catch (e) { console.error(e); }
   }
+  const opener = current.opener;
   current = null;
   clear(hostEl);
   hostEl.hidden = true;
+  if (opener && opener.isConnected && typeof opener.focus === 'function') {
+    try { opener.focus(); } catch { /* the row may be gone */ }
+  }
 }
 
 function setActive(key) {
@@ -134,10 +151,11 @@ function makeTab(key, ctx) {
 // ---------------------------------------------------------------- head
 
 function buildHead(agent) {
-  const nameEl = h('h2', { class: 'panel-name' }, agent.name || agent.id);
+  const nameEl = h('h2', { class: 'panel-name', tabindex: '-1' }, agent.name || agent.id);
   const subEl = h('div', { class: 'panel-sub' }, '');
   const chipEl = h('span', { class: 'chip' });
-  const closeBtn = h('button', { class: 'btn btn-sm btn-ghost panel-close', onclick: () => select(null), title: 'Close (Esc)' }, 'Close');
+  const warnEl = h('div', { class: 'panel-warn', hidden: true, role: 'status' });
+  const closeBtn = h('button', { class: 'btn btn-sm btn-ghost panel-close', type: 'button', onclick: () => select(null), title: 'Close (Esc)' }, 'Close');
 
   const tabBtns = new Map();
   const tabsEl = h('nav', { class: 'tabs panel-tabs', role: 'tablist', 'aria-label': 'Agent detail' },
@@ -154,16 +172,26 @@ function buildHead(agent) {
     h('div', { class: 'panel-head-top' },
       h('div', { class: 'panel-ident' }, nameEl, subEl),
       h('div', { class: 'panel-head-actions' }, chipEl, closeBtn)),
+    warnEl,
     tabsEl);
 
   return {
     el,
+    focus() { try { nameEl.focus(); } catch { /* ignore */ } },
     update(a) {
       setText(nameEl, a.name || a.id);
+      setAttr(nameEl, 'title', a.name || a.id);
       setText(subEl, [a.role, a.runtime, a.model, a.effort && ('effort: ' + a.effort), a.id]
         .filter(Boolean).join('  ·  '));
       setAttr(chipEl, 'data-status', a.status || 'queued');
       setText(chipEl, a.status || 'queued');
+      // One banner for the conditions that make half the tabs look broken.
+      const notes = [];
+      if (a.cwdExists === false) notes.push(`Working directory is gone: ${a.cwd || '(none)'} — Files, Diff and Restart cannot work until it is back.`);
+      if (a.status === 'blocked' && a.note) notes.push(`Blocked: ${a.note}`);
+      warnEl.hidden = notes.length === 0;
+      setAttr(warnEl, 'data-tone', a.cwdExists === false ? 'bad' : 'warn');
+      setText(warnEl, notes.join('  ·  '));
     },
     setActive(key) {
       for (const [k, b] of tabBtns) setAttr(b, 'aria-selected', k === key ? 'true' : 'false');
@@ -190,6 +218,9 @@ function createExtraTab(ctx) {
     return b;
   });
 
+  const removeBtn = h('button', { class: 'btn btn-sm btn-danger', type: 'button' }, 'Remove from tree');
+  removeBtn.addEventListener('click', () => runRemove());
+
   const markSelect = h('select', { 'aria-label': 'Mark status' },
     h('option', { value: '' }, 'Mark…'),
     h('option', { value: 'done' }, 'done'),
@@ -212,15 +243,39 @@ function createExtraTab(ctx) {
       h('div', { class: 'btn-row mark-row' },
         h('span', { class: 'mark-label' }, 'Mark status'),
         h('div', { class: 'mark-select' }, markSelect),
-        markNote, markBtn)),
+        markNote, markBtn),
+      h('div', { class: 'btn-row', style: { marginTop: '12px' } },
+        removeBtn,
+        h('span', { class: 'faint', style: { fontSize: '12px' } },
+          'Removes the record from the tree. Its worktree, branch and transcript are left alone.'))),
     noteCard,
     h('div', { class: 'card' }, h('h3', { class: 'card-label' }, 'Agent'), fieldsEl),
     h('div', { class: 'card' }, h('h3', { class: 'card-label' }, 'Usage breakdown'), usageEl),
     worktreeCard);
 
   const busy = (on) => {
-    for (const b of [takeBtn, returnBtn, markBtn, ...actionBtns]) b.disabled = on;
+    for (const b of [takeBtn, returnBtn, markBtn, removeBtn, ...actionBtns]) b.disabled = on;
+    // Releasing the busy lock must not re-enable actions this agent cannot do;
+    // update() owns that decision.
+    if (!on) { const a = ctx.getAgent(); if (a) update(a); }
   };
+
+  async function runRemove() {
+    const a = ctx.getAgent();
+    const label = a ? (a.name || a.id) : ctx.agentId;
+    if (!window.confirm(`Remove "${label}" from the tree?\n\nThe agent record and its message history go; the worktree, branch and CLI transcript stay on disk. Its children are re-parented.`)) return;
+    busy(true);
+    // The state frame announcing the removal would otherwise also fire the
+    // "this agent is gone" notice — one action, one message.
+    if (current && current.id === ctx.agentId) current.removing = true;
+    try {
+      await api.deleteAgent(ctx.agentId);
+      toast(`Removed "${label}".`, 'ok');
+      select(null);
+    } catch (err) {
+      toast('Remove failed: ' + err.message, 'error', 7000);
+    } finally { busy(false); }
+  }
 
   async function runControl(holder) {
     busy(true);
@@ -304,13 +359,29 @@ function createExtraTab(ctx) {
       ...kv('effort', h('dd', null, a.effort || '—')),
       ...kv('status', h('dd', null, h('span', { class: 'chip', dataset: { status: a.status || 'queued' } }, a.status || 'queued'))),
       ...kv('task', h('dd', null, a.task || '—')),
-      ...kv('cwd', h('dd', { class: 'mono' }, a.cwd || '—')),
+      ...kv('cwd', h('dd', { class: 'mono' },
+        a.cwd || '—',
+        a.cwdExists === false ? h('span', { class: 'badge badge-bad', title: 'This folder no longer exists on disk' }, 'missing') : null)),
       ...kv('session', h('dd', { class: 'mono' }, a.sessionId || 'none')),
       ...kv('pid', h('dd', { class: 'mono' }, a.pid != null ? String(a.pid) : '—')),
       ...kv('created', h('dd', { class: 'mono' }, f.dateTime(a.createdAt))),
       ...kv('started', h('dd', { class: 'mono' }, a.startedAt ? f.dateTime(a.startedAt) : 'not started')),
       ...kv('ended', h('dd', { class: 'mono' }, a.endedAt ? f.dateTime(a.endedAt) : '—')),
       ...kv('elapsed', elapsedEl));
+
+    // A restart needs a folder to start in; an agent with no live terminal
+    // cannot be interrupted or paused. Disable what cannot work, and say why.
+    const live = !['done', 'failed', 'stopped'].includes(a.status);
+    for (const [i, spec] of ACTIONS.entries()) {
+      const b = actionBtns[i];
+      let why = null;
+      if (spec.action === 'restart' && a.cwdExists === false) why = 'the working directory no longer exists';
+      else if (spec.action === 'restart' && a.runtime === 'external') why = 'external sessions are not started by the control room';
+      else if (spec.action !== 'restart' && a.runtime === 'external') why = 'external sessions have no terminal to signal';
+      else if (spec.action !== 'restart' && !live) why = `nothing is running (status: ${a.status})`;
+      b.disabled = Boolean(why);
+      setAttr(b, 'title', why ? `Unavailable: ${why}` : null);
+    }
 
     // usage
     const u = a.usage || {};

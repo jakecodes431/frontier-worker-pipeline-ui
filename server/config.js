@@ -71,6 +71,10 @@ function readJson(name, { expand = false } = {}) {
 export const config = readJson('runtimes.json', { expand: true });
 export const pricing = readJson('pricing.json');
 export const protocolTemplate = fs.readFileSync(configFile('protocol.md'), 'utf8');
+/** The checkout's own version, shown in the UI. Never a reason to fail a boot. */
+const pkgVersion = (() => {
+  try { return JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8')).version || '0.0.0'; } catch { return '0.0.0'; }
+})();
 
 if (unresolvedVars.size) {
   console.warn(`[control-room] config/runtimes.json references undefined variable(s): ${[...unresolvedVars].join(', ')}. Set them in your environment (see .env.example) or edit the config.`);
@@ -105,10 +109,30 @@ export function costOf(usage, model) {
   ) / 1e6;
 }
 
+/**
+ * Day key in the operator's LOCAL timezone.
+ *
+ * Spend windows are read by a human looking at a wall clock. Slicing an ISO
+ * string (which is UTC) put every evening's work into "tomorrow" for anyone
+ * west of Greenwich, so "spend today" read $0.00 while money was being spent.
+ */
+export function localDay(d = new Date()) {
+  const dt = d instanceof Date ? d : new Date(d);
+  if (Number.isNaN(dt.getTime())) return localDay(new Date());
+  const p = (n) => String(n).padStart(2, '0');
+  return `${dt.getFullYear()}-${p(dt.getMonth() + 1)}-${p(dt.getDate())}`;
+}
+
 export function publicConfig() {
   return {
     runtimes: Object.fromEntries(Object.entries(config.runtimes).map(([k, v]) => [k, { label: v.label, defaults: v.defaults }])),
     pricing,
     crBin: CR_BIN,
+    // Sensible starting points for the New agent form — never a path baked into
+    // the source: this checkout and whatever the config already defaults to.
+    defaultCwd: ROOT.replace(/\\/g, '/'),
+    defaultModel: config.runtimes.claude?.defaults?.model || null,
+    dataDir: DATA_DIR.replace(/\\/g, '/'),
+    version: pkgVersion,
   };
 }

@@ -2,12 +2,15 @@
 /**
  * cr — the control room CLI that agents (and humans) use.
  *   node bin/cr.js spawn --name N --role worker --runtime deepseek --task "..." [--brief-file f] [--repo R] [--branch B] [--cwd D] [--model M] [--effort E] [--parent ID] [--wait]
+ *   node bin/cr.js register --name N --role cto [--session ID] [--cwd D] [--task "..."]   (track a session the control room did not start)
  *   node bin/cr.js list | tree | inbox | wait <id...> [--timeout S] | result <id> | logs <id> [--tail N]
- *   node bin/cr.js send <id> "text" | report "text" | status done|blocked|failed [--note "..."] | stop <id> | agent <id>
+ *   node bin/cr.js send <id> "text" | report "text" | status done|blocked|failed [--note "..."] | stop <id> | restart <id> | agent <id>
+ *   node bin/cr.js usage | health
  * Identity comes from CR_AGENT_ID (set in every spawned terminal); the server URL from CR_URL,
  * falling back to the host/port in config/runtimes.json and then to http://127.0.0.1:4800.
  */
 import fs from 'node:fs';
+import path from 'node:path';
 
 /** Server URL from config/runtimes.json, so changing the port there is enough for this CLI too. */
 function configuredBase() {
@@ -37,11 +40,19 @@ function parse(args) {
 }
 
 async function call(method, p, body) {
-  const r = await fetch(URL_BASE + p, {
-    method,
-    headers: { 'content-type': 'application/json', 'x-sender': SELF ? `agent:${SELF}` : 'human' },
-    body: body ? JSON.stringify(body) : undefined,
-  });
+  let r;
+  try {
+    r = await fetch(URL_BASE + p, {
+      method,
+      headers: { 'content-type': 'application/json', 'x-sender': SELF ? `agent:${SELF}` : 'human' },
+      body: body ? JSON.stringify(body) : undefined,
+    });
+  } catch (e) {
+    // "fetch failed" tells nobody anything; name the address and the fix.
+    const err = new Error(`cannot reach the control room at ${URL_BASE} — is it running? (npm start)`);
+    err.cause = e;
+    throw err;
+  }
   const text = await r.text();
   let j; try { j = JSON.parse(text); } catch { j = { raw: text }; }
   if (!r.ok) { const e = new Error(j.error || `${r.status} ${p}`); e.body = j; e.status = r.status; throw e; }
@@ -74,6 +85,26 @@ async function main() {
       if (opts.wait) { await waitFor([a.id], Number(opts.timeout || 1800)); const r = await call('GET', `/api/agents/${a.id}/result`); console.log(r.result || '(no result)'); process.exit(r.status === 'done' ? 0 : 1); }
       return;
     }
+    case 'register': {
+      // Track a session the control room did not spawn (the one you are typing
+      // in, typically). No process is started; usage and chat are read from the
+      // CLI's own transcript when a session id is given.
+      if (!opts.name) throw new Error('--name is required');
+      const a = await call('POST', '/api/agents', {
+        parentId: opts.parent || null,
+        name: opts.name,
+        role: opts.role || 'cto',
+        runtime: 'external',
+        task: opts.task || `${opts.role || 'cto'} session registered from the CLI`,
+        cwd: path.resolve(opts.cwd || process.cwd()),
+        sessionId: opts.session || opts.sessionId || null,
+        model: opts.model,
+        status: opts.status || 'running',
+      });
+      console.log(a.id);
+      console.error(`registered ${a.name} (${a.id})${a.sessionId ? ` tracking session ${a.sessionId}` : ' — pass --session <id> to read its transcript'}`);
+      return;
+    }
     case 'list': {
       const all = await call('GET', '/api/agents');
       const mine = opts.all || !SELF ? all : all.filter(a => a.parentId === SELF || a.id === SELF);
@@ -104,10 +135,24 @@ async function main() {
     case 'restart': { for (const id of pos) console.log(line(await call('POST', `/api/agents/${id}/action`, { action: 'restart' }))); return; }
     case 'usage': { console.log(JSON.stringify(await call('GET', '/api/usage'), null, 2)); return; }
     case 'health': { console.log(JSON.stringify(await call('GET', '/api/health'))); return; }
+    case 'help': case '--help': case '-h': case undefined:
+      console.log(usageText());
+      return;
     default:
-      console.error(fs.readFileSync(new URL(import.meta.url), 'utf8').split('\n').slice(1, 9).join('\n'));
+      console.error(`cr: unknown command "${cmd}"\n`);
+      console.error(usageText());
       process.exit(2);
   }
+}
+
+/** The header comment of this file is the help text; keep them one thing. */
+function usageText() {
+  const src = fs.readFileSync(new URL(import.meta.url), 'utf8');
+  const body = src.split('\n').slice(1);
+  const lines = body.slice(0, body.findIndex(l => l.trim().startsWith('*/')))
+    .map(l => l.replace(/^\s*\*\s?/, ''))
+    .filter(l => l.trim() && !l.trim().startsWith('/*'));
+  return lines.join('\n') + `\n\nserver: ${URL_BASE}${SELF ? `\nagent:  ${SELF}` : ''}`;
 }
 
 async function waitFor(ids, timeoutS) {

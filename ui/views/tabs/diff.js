@@ -1,6 +1,6 @@
 // Diff tab — `stat` header plus the unified diff with +/- line coloring.
 
-import { h, clear, replace } from '../../lib/dom.js';
+import { h, clear } from '../../lib/dom.js';
 import api from '../../lib/api.js';
 
 export function createDiffTab(ctx) {
@@ -25,16 +25,24 @@ export function createDiffTab(ctx) {
     try {
       const res = await api.diff(ctx.agentId);
       loaded = true;
+      metaEl.textContent = '';
+      if (res && (res.missing || res.notRepo)) {
+        statEl.hidden = true;
+        clear(bodyEl);
+        bodyEl.appendChild(h('div', { class: 'notice' },
+          h('h4', null, res.missing ? 'Working directory is gone' : 'Not a git repository'),
+          h('p', null, res.message || 'There is no diff to show for this agent.')));
+        return;
+      }
       const stat = String((res && res.stat) || '').trim();
       statEl.textContent = stat || 'no stat reported';
       statEl.hidden = false;
       renderDiff(String((res && res.diff) || ''));
-      metaEl.textContent = '';
     } catch (err) {
       loaded = true;
       statEl.hidden = true;
-      replace(bodyEl, '');
-      bodyEl.replaceChildren(h('span', { class: 'dl-meta' }, 'Could not load diff: ' + err.message));
+      clear(bodyEl);
+      bodyEl.appendChild(h('div', { class: 'error-box', role: 'alert', style: { margin: '14px' } }, 'Could not load the diff: ' + err.message));
       metaEl.textContent = '';
     } finally {
       refreshBtn.disabled = false;

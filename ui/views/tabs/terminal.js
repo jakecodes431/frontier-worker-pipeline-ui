@@ -61,6 +61,7 @@ export function createTerminalTab(ctx) {
   let ro = null;
   let degraded = false;
   let external = false;
+  let lastAttachAt = 0;
 
   function setState(kind) {
     // live wears the gem chip; everything else is a quiet neutral chip
@@ -69,7 +70,9 @@ export function createTerminalTab(ctx) {
       noteEl.textContent = 'attached to the running process';
     } else if (kind === 'exited') {
       stateChip.dataset.status = 'stopped'; stateChip.textContent = 'read only';
-      noteEl.textContent = 'process exited · read-only scrollback';
+      const a = ctx.getAgent();
+      const code = a && a.exitCode != null ? ` (exit code ${a.exitCode})` : '';
+      noteEl.textContent = `process exited${code} · read-only scrollback · Restart re-attaches`;
     } else if (kind === 'external') {
       stateChip.dataset.status = 'stopped'; stateChip.textContent = 'no terminal';
       noteEl.textContent = 'in-app Claude session';
@@ -192,7 +195,13 @@ export function createTerminalTab(ctx) {
       ctx.conn.send({ type: 'attach', id: ctx.agentId });
     });
 
+    lastAttachAt = Date.now();
     ctx.conn.send({ type: 'attach', id: ctx.agentId });
+    // The attach frame is queued while the socket is down; say so rather than
+    // sitting on "connecting" with no explanation.
+    if (ctx.conn.state !== 'open') {
+      noteEl.textContent = 'waiting for the control server connection…';
+    }
     requestAnimationFrame(() => doFit());
 
     if (typeof ResizeObserver === 'function') {
@@ -223,11 +232,21 @@ export function createTerminalTab(ctx) {
     },
     deactivate() { /* stay attached while the panel is open so output is not lost */ },
     onAgentFrame(a) {
+      if (!a) return;
       // The process ended while we were watching: the stream stops, the view stays.
-      if (live && a && FINISHED.has(a.status)) {
+      if (live && FINISHED.has(a.status)) {
         live = false;
         if (term) { term.options.disableStdin = true; term.options.cursorBlink = false; }
         setState('exited');
+        return;
+      }
+      // It came back (Restart): re-attach so the new process streams here
+      // instead of leaving a dead read-only pane behind.
+      if (!live && attached && !FINISHED.has(a.status) && a.pid && Date.now() - lastAttachAt > 3000) {
+        lastAttachAt = Date.now();
+        gotFirst = false;
+        setState('connecting');
+        ctx.conn.send({ type: 'attach', id: ctx.agentId });
       }
     },
     destroy() {

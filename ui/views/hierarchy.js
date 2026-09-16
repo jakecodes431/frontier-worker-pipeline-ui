@@ -14,9 +14,9 @@
 // here) are untouched by state frames. When an agent changes section or column
 // its element is MOVED and flashes briefly so the move is visible.
 
-import { h, setText, setAttr } from '../lib/dom.js';
+import { h, setText, setAttr, qs } from '../lib/dom.js';
 import * as f from '../lib/format.js';
-import { store, getAgents, getSelectedId, select, treeOrder } from '../lib/store.js';
+import { store, getAgents, getSelectedId, select, treeOrder, isLoaded, getConfig } from '../lib/store.js';
 
 export const FINISHED = new Set(['done', 'failed', 'stopped']);
 const LS_FOLDER = 'cr.hierarchy.finishedOpen';
@@ -28,6 +28,8 @@ function lsSet(key, value) { try { window.localStorage.setItem(key, value); } ca
 let rootEl = null;
 let countEl = null;
 let modeEl = null;
+let emptyEl = null;
+let rovingId = null;   // the one row/card in the tab order (roving tabindex)
 let mode = lsGet(LS_MODE) === 'board' ? 'board' : 'list';
 
 // list view
@@ -60,7 +62,8 @@ export function mountHierarchy({ root, count, modeToggle }) {
 
   buildList();
   buildBoard();
-  rootEl.append(listEl, boardEl);
+  buildEmpty();
+  rootEl.append(emptyEl, listEl, boardEl);
 
   if (modeEl) {
     for (const b of modeEl.querySelectorAll('[data-mode]')) {
@@ -78,6 +81,79 @@ export function mountHierarchy({ root, count, modeToggle }) {
   startTicker();
 }
 
+/* ------------------------------------------------------ keyboard traversal */
+
+/**
+ * Roving tabindex: one Tab stop for the whole tree (or board), arrows to move
+ * inside it. Twenty focusable rows in the tab order is not "navigable", it is a
+ * tax on every keyboard user trying to reach the drawer behind them.
+ */
+function items() {
+  const sel = mode === 'list' ? '.node' : '.kcard';
+  const scope = mode === 'list' ? listEl : boardEl;
+  if (!scope || scope.hidden) return [];
+  return Array.from(scope.querySelectorAll(sel)).filter((el) => el.offsetParent !== null);
+}
+
+function applyRoving() {
+  const list = items();
+  if (!list.length) return;
+  if (!list.some((el) => el.dataset.id === rovingId)) rovingId = getSelectedId() || list[0].dataset.id;
+  for (const el of list) el.tabIndex = el.dataset.id === rovingId ? 0 : -1;
+}
+
+function focusItem(el) {
+  if (!el) return;
+  rovingId = el.dataset.id;
+  applyRoving();
+  el.focus();
+  if (typeof el.scrollIntoView === 'function') el.scrollIntoView({ block: 'nearest' });
+}
+
+/** Column-aware movement for the board; plain list movement for the tree. */
+function move(current, key) {
+  const list = items();
+  const i = list.indexOf(current);
+  if (i < 0) return null;
+  if (key === 'Home') return list[0];
+  if (key === 'End') return list[list.length - 1];
+  if (mode === 'list') {
+    if (key === 'ArrowDown') return list[Math.min(list.length - 1, i + 1)];
+    if (key === 'ArrowUp') return list[Math.max(0, i - 1)];
+    return null;
+  }
+  const col = current.parentElement;
+  const inCol = Array.from(col.children).filter((el) => el.classList.contains('kcard'));
+  const j = inCol.indexOf(current);
+  if (key === 'ArrowDown') return inCol[Math.min(inCol.length - 1, j + 1)];
+  if (key === 'ArrowUp') return inCol[Math.max(0, j - 1)];
+  if (key === 'ArrowRight' || key === 'ArrowLeft') {
+    const bodies = Array.from(boardEl.querySelectorAll('.col-body'));
+    let c = bodies.indexOf(col);
+    while (true) {
+      c += key === 'ArrowRight' ? 1 : -1;
+      if (c < 0 || c >= bodies.length) return null;
+      const cards = Array.from(bodies[c].children).filter((el) => el.classList.contains('kcard'));
+      if (cards.length) return cards[Math.min(j, cards.length - 1)];
+    }
+  }
+  return null;
+}
+
+/** Shared row/card key handling: move, select, or fall through. */
+function onItemKey(ev, id) {
+  if (ev.key === 'Enter' || ev.key === ' ' || ev.key === 'Spacebar') {
+    ev.preventDefault();
+    select(id);
+    return;
+  }
+  if (!['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(ev.key)) return;
+  const next = move(ev.currentTarget, ev.key);
+  if (!next) return;
+  ev.preventDefault();
+  focusItem(next);
+}
+
 function setMode(next, force) {
   if (next !== 'list' && next !== 'board') return;
   if (next === mode && !force) return;
@@ -91,6 +167,28 @@ function setMode(next, force) {
   render();
 }
 
+/** The tree is empty on a fresh install; say what to do, not "nothing active". */
+function buildEmpty() {
+  const cfg = getConfig() || {};
+  emptyEl = h('section', { class: 'plate', hidden: true, 'aria-label': 'No agents yet' },
+    h('div', { class: 'plate-head' },
+      h('h2', { class: 'plate-title' }, 'No agents yet'),
+      h('span', { class: 'plate-note' }, 'this is the whole fleet, and it is empty')),
+    h('div', { class: 'plate-pad' },
+      h('p', { class: 'step-text' },
+        'Every node here is a real CLI process (or a session you registered), with its own terminal, diff and conversation. ',
+        'Create the first one and it appears in this tree the moment it starts.'),
+      h('div', { class: 'btn-row', style: { marginTop: '14px' } },
+        h('button', {
+          class: 'btn btn-primary', type: 'button',
+          onclick: () => { const b = qs('#new-agent-btn') || qs('#new-agent-btn-mobile'); if (b) b.click(); },
+        }, 'New agent')),
+      h('p', { class: 'step-text', style: { marginTop: '16px' } },
+        'From a terminal, the same thing: '),
+      h('pre', { class: 'code-inline mono' },
+        `node ${cfg.crBin || 'bin/cr.js'} spawn --name "first worker" --role worker \\\n  --runtime deepseek --repo <path-to-repo> --task "one line"`)));
+}
+
 function render() {
   if (!rootEl) return;
   const agents = getAgents();
@@ -98,7 +196,13 @@ function render() {
     const live = agents.filter((a) => !FINISHED.has(a.status)).length;
     setText(countEl, agents.length ? `${agents.length} agent${agents.length === 1 ? '' : 's'} · ${live} active` : '');
   }
+  const blank = agents.length === 0 && isLoaded();
+  if (emptyEl) emptyEl.hidden = !blank;
+  listEl.hidden = blank || mode !== 'list';
+  boardEl.hidden = blank || mode !== 'board';
+  if (blank) return;
   if (mode === 'list') renderList(agents); else renderBoard(agents);
+  applyRoving();
 }
 
 function flash(el) {
@@ -308,6 +412,7 @@ function rail(depth, isLast, ancestorsLast) {
 
 function buildRow(agent) {
   const railEl = h('span', { class: 'node-rail', 'aria-hidden': 'true' });
+  const warnEl = h('span', { class: 'node-warn', hidden: true, title: '' }, '!');
   const nameEl = h('div', { class: 'node-name' });
   const metaEl = h('div', { class: 'node-meta' });
   const roleEl = h('span', { class: 'role-tag' });
@@ -318,15 +423,16 @@ function buildRow(agent) {
   const costEl = h('div', { class: 'node-num node-num-cost' });
 
   const row = h('div', {
-    class: 'node', role: 'treeitem', tabindex: '0',
+    class: 'node', role: 'treeitem', tabindex: '-1',
     dataset: { id: agent.id },
-    onclick: () => select(agent.id),
-    onkeydown: (ev) => { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); select(agent.id); } },
+    onclick: () => { rovingId = agent.id; select(agent.id); },
+    onkeydown: (ev) => onItemKey(ev, agent.id),
+    onfocus: () => { rovingId = agent.id; },
   },
-    h('div', { class: 'node-main' }, railEl, roleEl, h('div', { class: 'node-ident' }, nameEl, metaEl)),
+    h('div', { class: 'node-main' }, railEl, roleEl, h('div', { class: 'node-ident' }, nameEl, metaEl), warnEl),
     chipEl, taskEl, elapsedEl, tokensEl, costEl);
 
-  row._parts = { railEl, nameEl, metaEl, roleEl, chipEl, taskEl, elapsedEl, tokensEl, costEl };
+  row._parts = { railEl, warnEl, nameEl, metaEl, roleEl, chipEl, taskEl, elapsedEl, tokensEl, costEl };
   return row;
 }
 
@@ -335,6 +441,8 @@ function updateRow(row, agent, byId) {
   if (!p) return;
   setText(p.railEl, row.dataset.rail || '');
   setText(p.nameEl, agent.name || agent.id);
+  // Names can be arbitrarily long; the cell ellipsises, the tooltip does not.
+  setAttr(p.nameEl, 'title', agent.name || agent.id);
   setText(p.roleEl, shortRole(agent.role));
   setAttr(p.roleEl, 'title', 'role: ' + (agent.role || 'unknown'));
   const parent = agent.parentId && byId ? byId.get(agent.parentId) : null;
@@ -349,6 +457,15 @@ function updateRow(row, agent, byId) {
   setText(p.taskEl, f.truncate(agent.task || '', 120));
   setAttr(p.taskEl, 'title', agent.task || '');
 
+  // A worktree can be pruned or deleted under a finished agent; say so here
+  // rather than letting Files and Diff come back mysteriously empty.
+  const missing = agent.cwdExists === false;
+  if (p.warnEl) {
+    p.warnEl.hidden = !missing;
+    setAttr(p.warnEl, 'title', missing ? `Working directory no longer exists: ${agent.cwd || '(none)'}` : null);
+    setAttr(p.warnEl, 'aria-label', missing ? 'working directory is missing' : null);
+  }
+
   applyElapsed(p.elapsedEl, agent);
   const u = agent.usage || {};
   setText(p.tokensEl, u.totalTokens ? f.tokens(u.totalTokens) : '—');
@@ -360,20 +477,27 @@ function buildNeedsRow(agent) {
   const name = h('div', { class: 'needs-name' });
   const parent = h('div', { class: 'needs-parent' });
   const note = h('div', { class: 'needs-note' });
+  // The row is a mouse target; the button inside it is the keyboard path. One
+  // tab stop per blocked agent, not two, and no nested button semantics.
+  const openBtn = h('button', {
+    class: 'btn btn-sm', type: 'button',
+    onclick: (ev) => { ev.stopPropagation(); select(agent.id); },
+  }, 'Open');
   const row = h('div', {
-    class: 'needs-row', role: 'button', tabindex: '0', dataset: { id: agent.id },
+    class: 'needs-row', dataset: { id: agent.id },
     onclick: () => select(agent.id),
-    onkeydown: (ev) => { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); select(agent.id); } },
   },
     h('div', null, name, parent),
     note,
-    h('button', { class: 'btn btn-sm', type: 'button', onclick: (ev) => { ev.stopPropagation(); select(agent.id); } }, 'Open'));
+    openBtn);
+  row._open = openBtn;
   row._parts = { name, parent, note };
   return row;
 }
 
 function updateNeedsRow(row, agent, byId) {
   const p = row._parts;
+  if (row._open) setAttr(row._open, 'aria-label', `Open ${agent.name || agent.id}`);
   setText(p.name, agent.name || agent.id);
   const parent = agent.parentId ? byId.get(agent.parentId) : null;
   setText(p.parent, parent ? `under ${parent.name || parent.id}` : 'top level');
@@ -484,9 +608,10 @@ function buildCard(agent) {
   const tokens = h('span', { class: 'kcard-stat-v' });
   const cost = h('span', { class: 'kcard-stat-v' });
   const card = h('div', {
-    class: 'kcard', role: 'listitem', tabindex: '0', dataset: { id: agent.id },
-    onclick: () => select(agent.id),
-    onkeydown: (ev) => { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); select(agent.id); } },
+    class: 'kcard', role: 'listitem', tabindex: '-1', dataset: { id: agent.id },
+    onclick: () => { rovingId = agent.id; select(agent.id); },
+    onkeydown: (ev) => onItemKey(ev, agent.id),
+    onfocus: () => { rovingId = agent.id; },
   },
     h('div', { class: 'kcard-top' }, name, chip),
     h('div', { class: 'kcard-meta' }, role, model),

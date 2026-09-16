@@ -2,15 +2,31 @@
 
 const NA = 'not available';
 
+/**
+ * True for anything that cannot be shown as a number.
+ *
+ * Servers and transcripts hand this layer whatever they have: null, an empty
+ * string, an object, NaN from a bad division. Every one of those used to reach
+ * `toFixed` and paint "$NaN" or "NaNs" into the UI, so the test is finiteness
+ * AFTER coercion, not just `typeof`.
+ */
 export function isNil(v) {
-  return v === null || v === undefined || (typeof v === 'number' && !Number.isFinite(v));
+  if (v === null || v === undefined || v === '') return true;
+  if (typeof v === 'boolean') return true;
+  return !Number.isFinite(typeof v === 'number' ? v : Number(v));
+}
+
+/** Coerce to a finite number, or null. */
+function num(v) {
+  if (isNil(v)) return null;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
 }
 
 /** $0.0123 for small amounts, $12.34 for larger ones. */
 export function usd(v) {
-  if (isNil(v)) return NA;
-  const n = Number(v);
-  if (!Number.isFinite(n)) return NA;
+  const n = num(v);
+  if (n === null) return NA;
   const abs = Math.abs(n);
   const sign = n < 0 ? '-' : '';
   if (abs === 0) return '$0.00';
@@ -22,9 +38,8 @@ export function usd(v) {
 
 /** 1.2M / 12.3k / 845 */
 export function tokens(v) {
-  if (isNil(v)) return NA;
-  const n = Number(v);
-  if (!Number.isFinite(n)) return NA;
+  const n = num(v);
+  if (n === null) return NA;
   const abs = Math.abs(n);
   const sign = n < 0 ? '-' : '';
   if (abs >= 1e9) return sign + trim(abs / 1e9) + 'B';
@@ -40,14 +55,16 @@ function trim(n) {
 }
 
 export function count(v) {
-  if (isNil(v)) return NA;
-  return Number(v).toLocaleString('en-US');
+  const n = num(v);
+  if (n === null) return NA;
+  return n.toLocaleString('en-US');
 }
 
 /** 1h 04m 12s / 4m 12s / 12s */
 export function duration(seconds) {
-  if (isNil(seconds)) return '—';
-  let s = Math.max(0, Math.floor(Number(seconds)));
+  const n = num(seconds);
+  if (n === null) return '—';
+  let s = Math.max(0, Math.floor(n));
   const h = Math.floor(s / 3600); s -= h * 3600;
   const m = Math.floor(s / 60); s -= m * 60;
   if (h) return `${h}h ${pad(m)}m ${pad(s)}s`;
@@ -58,8 +75,8 @@ export function duration(seconds) {
 function pad(n) { return String(n).padStart(2, '0'); }
 
 export function bytes(n) {
-  if (isNil(n)) return '—';
-  const v = Number(n);
+  const v = num(n);
+  if (v === null) return '—';
   if (v < 1024) return v + ' B';
   if (v < 1024 * 1024) return (v / 1024).toFixed(1) + ' KB';
   return (v / 1048576).toFixed(1) + ' MB';
@@ -80,7 +97,10 @@ export function dateTime(iso) {
 
 export function toDate(iso) {
   if (!iso) return null;
-  const d = new Date(iso);
+  // `new Date({})` and `new Date([])` are Invalid Date and 1970 respectively;
+  // only strings, numbers and Dates are meaningful here.
+  if (typeof iso !== 'string' && typeof iso !== 'number' && !(iso instanceof Date)) return null;
+  const d = iso instanceof Date ? iso : new Date(iso);
   return Number.isNaN(d.getTime()) ? null : d;
 }
 
@@ -92,6 +112,8 @@ export function elapsedSince(iso) {
 }
 
 export function truncate(text, max = 120) {
+  // A non-finite number is not text: it must never be painted as "NaN".
+  if (typeof text === 'number' && !Number.isFinite(text)) return '';
   const s = String(text ?? '');
   if (s.length <= max) return s;
   return s.slice(0, max - 1).trimEnd() + '…';

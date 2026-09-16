@@ -5,7 +5,7 @@ end to end, from a terminal, against a repo of your own. Nothing here is specifi
 feature — it is the shape of every run.
 
 Paths are written with forward slashes, which work on macOS, Linux and Windows alike;
-substitute your own (`/home/you/code/notes-app`, `C:/code/notes-app`, ...).
+substitute your own (`~/code/notes-app`, `C:/code/notes-app`, ...).
 
 ## 0. Before you start
 

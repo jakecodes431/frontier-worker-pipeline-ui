@@ -14,6 +14,8 @@ export function createLogsTab(ctx) {
     h('div', { class: 'pane-toolbar' }, h('span', null, 'Events'), metaEl, refreshBtn),
     scroll);
 
+  const PAGE = 200;
+  let shown = PAGE;
   let loaded = false;
   let inflight = false;
 
@@ -39,13 +41,23 @@ export function createLogsTab(ctx) {
     clear(listEl);
     metaEl.textContent = `${events.length} event${events.length === 1 ? '' : 's'}`;
     if (!events.length) {
-      listEl.appendChild(h('div', { class: 'empty' }, 'No events recorded for this agent.'));
+      listEl.appendChild(h('div', { class: 'empty' }, 'No events recorded for this agent yet. Spawning, exits, status changes and errors all land here.'));
       return;
     }
     // Contract order is chronological; render newest last regardless.
     const sorted = events.slice().sort((a, b) => String(a.createdAt || '').localeCompare(String(b.createdAt || '')));
+    // The server hands back up to 1000 events and this pane re-renders on every
+    // agent frame; only the tail is put in the DOM.
+    const hidden = Math.max(0, sorted.length - shown);
+    const visible = hidden ? sorted.slice(hidden) : sorted;
     const frag = document.createDocumentFragment();
-    for (const e of sorted) {
+    if (hidden > 0) {
+      frag.appendChild(h('button', {
+        class: 'cto-earlier', type: 'button', style: { margin: '10px auto' },
+        onclick: () => { shown += PAGE; render(events); },
+      }, `Show earlier (${hidden} more)`));
+    }
+    for (const e of visible) {
       frag.appendChild(h('div', { class: 'log-row' },
         h('span', { class: 'log-ts', title: f.dateTime(e.createdAt) }, f.clock(e.createdAt)),
         h('span', { class: 'log-kind', dataset: { kind: e.kind || 'event' } }, String(e.kind || 'event')),
@@ -55,11 +67,17 @@ export function createLogsTab(ctx) {
     if (nearBottom) scroll.scrollTop = scroll.scrollHeight;
   }
 
+  let pending = 0;
   return {
     el,
     activate() { load(false); },
     deactivate() {},
-    onAgentFrame() { load(true); },
-    destroy() {},
+    // Agent frames can arrive in bursts (one per agent every five seconds);
+    // reloading the event list on each one is wasted work.
+    onAgentFrame() {
+      if (pending) return;
+      pending = setTimeout(() => { pending = 0; load(true); }, 1000);
+    },
+    destroy() { clearTimeout(pending); },
   };
 }

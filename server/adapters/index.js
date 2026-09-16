@@ -96,8 +96,29 @@ export const adapters = {
 
   deepseek: {
     oneShot: true,
+    /**
+     * The worker CLI's entry script, as config/runtimes.json spells it — normally
+     * "${DSH_REPO}/apps/cli/lib/bin.js", already env- and ~-expanded by config.js.
+     * Returned so a missing checkout can be reported before anything is spawned.
+     */
+    harnessScript() {
+      const [first] = config.runtimes.deepseek.args || [];
+      if (!first || /^-/.test(first) || /^\{/.test(first)) return null;
+      return path.resolve(expandHome(first));
+    },
     build(agent, port) {
       const rt = config.runtimes.deepseek;
+      // Spawning `node <missing script>` dies with a bare MODULE_NOT_FOUND in the
+      // agent's terminal; say what is missing and which variable points at it.
+      const script = this.harnessScript();
+      if (script && !fs.existsSync(script)) {
+        const e = new Error(
+          `The worker CLI was not found at ${script}. Clone the DeepSeek Harness (or whatever CLI you run ` +
+          'workers with), then point DSH_REPO at it — see .env.example — or edit runtimes.deepseek.args in ' +
+          'config/runtimes.json. See docs/TROUBLESHOOTING.md.');
+        e.code = 400;
+        throw e;
+      }
       const vars = { prompt: agent.prompt, model: agent.model || rt.defaults?.model };
       const args = buildArgs(rt.args, vars);
       const env = baseEnv(agent, port);

@@ -74,9 +74,23 @@ document.addEventListener('keydown', (ev) => { if (ev.key === 'Escape') closeNav
 // ------------------------------------------------------------- connection
 
 const conn = new Conn(wsUrl());
+let everConnected = false;
 
 const connEls = [qs('#conn'), qs('#conn-mobile')].filter(Boolean);
 const connMeta = qs('#conn-meta');
+const netbar = qs('#netbar');
+const netbarText = qs('#netbar-text');
+const netbarRetry = qs('#netbar-retry');
+
+if (netbarRetry) {
+  netbarRetry.addEventListener('click', () => {
+    setText(netbarText, 'Reconnecting…');
+    conn.connect();
+    api.state()
+      .then((s) => store.setState({ agents: s.agents, usage: s.usage, config: s.config }))
+      .catch((err) => toast('Still cannot reach the server: ' + err.message, 'error'));
+  });
+}
 
 conn.onState((state, attempt) => {
   let label, title;
@@ -96,8 +110,21 @@ conn.onState((state, attempt) => {
     setText(el.querySelector('.conn-text'), label);
     el.title = title;
   }
-  // The origin the page was served from — whatever host and port that is.
-  if (connMeta) setText(connMeta, state === 'open' ? (location.host || location.origin) : '');
+  // The rail's meta line is the address actually in use, not a baked-in port.
+  if (connMeta) setText(connMeta, state === 'open' ? (location.host || conn.url) : '');
+  if (netbar) {
+    // A first connection attempt is not a failure; the banner appears once the
+    // socket has actually dropped (or the first attempt has visibly failed).
+    const down = state === 'closed' || (state === 'connecting' && attempt > 0);
+    netbar.hidden = !down;
+    netbar.dataset.state = state;
+    if (down) {
+      const wait = conn.nextRetryMs ? Math.max(1, Math.round(conn.nextRetryMs / 1000)) : null;
+      setText(netbarText, everConnected
+        ? `Lost the control server. Live updates are paused${wait ? ` — retrying in ${wait}s` : ''}.`
+        : `Cannot reach the control server at ${location.host}. Is \`npm start\` running?`);
+    }
+  }
 });
 
 conn.on('state', (frame) => {
@@ -117,10 +144,12 @@ conn.on('message', (frame) => {
   }
 });
 
-let everConnected = false;
 conn.on('open', () => {
   if (everConnected) toast('Reconnected to the control server.', 'ok');
   everConnected = true;
+  // A reconnect may have missed frames; re-prime from HTTP.
+  if (netbar) netbar.hidden = true;
+  api.state().then((s) => store.setState({ agents: s.agents, usage: s.usage, config: s.config })).catch(() => { /* the socket will fill in */ });
 });
 conn.on('close', () => { if (everConnected) toast('Lost the control server — reconnecting…', 'error'); });
 
@@ -170,8 +199,22 @@ api.state()
   .then((s) => store.setState({ agents: s.agents, usage: s.usage, config: s.config }))
   .catch((err) => {
     console.warn('[app] initial /api/state failed', err);
-    toast('Initial /api/state failed: ' + err.message, 'error', 7000);
+    toast('Could not load the fleet: ' + err.message, 'error', 7000);
+    store.setLoadError(err.message);
   });
+
+// A crash inside a view must not leave a half-drawn page with nothing said.
+// Browser extensions and cross-origin scripts also land here, so the message is
+// deliberately non-alarming and deduplicated by the toast layer.
+window.addEventListener('error', (ev) => {
+  if (!ev || !ev.message) return;
+  toast('UI error: ' + ev.message, 'error', 6000);
+});
+window.addEventListener('unhandledrejection', (ev) => {
+  const reason = ev && ev.reason;
+  const msg = reason && reason.message ? reason.message : String(reason ?? 'unknown');
+  toast('Request failed: ' + msg, 'error', 6000);
+});
 
 conn.connect();
 

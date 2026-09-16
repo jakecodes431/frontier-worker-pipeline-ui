@@ -25,11 +25,15 @@ const agents = new Map();
 let usage = null;
 let config = null;
 let selectedId = null;
+let loaded = false;      // a full state frame has arrived at least once
+let loadError = null;    // why the last attempt to reach the server failed
 
 export function setState({ agents: list, usage: u, config: c }) {
   if (Array.isArray(list)) {
     agents.clear();
     for (const a of list) if (a && a.id) agents.set(a.id, a);
+    loaded = true;
+    loadError = null;
   }
   if (u) usage = u;
   if (c) config = c;
@@ -54,6 +58,14 @@ export function setUsage(u) {
   usage = u;
   store.emit('usage', usage);
 }
+
+/** Record that the server could not be reached, so views can say so. */
+export function setLoadError(message) {
+  loadError = message || 'unknown error';
+  store.emit('agents', getAgents());
+}
+export function isLoaded() { return loaded; }
+export function getLoadError() { return loadError; }
 
 export function getAgent(id) { return agents.get(id) || null; }
 export function getAgents() { return Array.from(agents.values()); }

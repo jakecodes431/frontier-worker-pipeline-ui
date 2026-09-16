@@ -31,14 +31,22 @@ CR_PORT=4899 CR_DATA_DIR=/tmp/cr-scratch npm start
 npm run check
 ```
 
-That is `node --check` on the server and the agent CLI, then
-`scripts/smoke.mjs`: it boots the server on port 4899 with a temporary data
-directory and asserts the static UI and the xterm vendor files are served, then
-creates an `external` agent — so no CLI is spawned and no tokens are spent —
-and exercises `/api/state`, status, control, the 409 when a parent sends to a
-human-controlled agent, the failure path for a missing `cwd`, and the diff and
-files endpoints. It exits non-zero if any assertion fails, and cleans up its
-temporary directory.
+That is `node --check` on the entry points, then `scripts/smoke.mjs`, which is
+the real gate. Before it boots anything it parses every shipped `.js`/`.mjs`
+file, refuses hard-coded home directories in the source, checks that the config
+loader really expands `${VAR}`, `${VAR:-fallback}` and `~`, checks that an unset
+default drops its option flag instead of emitting a dangling one, and runs the
+pure UI modules (formatters, tree ordering, thread merging) in Node.
+
+Then it boots the server on a free port — `CR_SMOKE_PORT` pins one — with a
+temporary data directory and a temporary `CR_CONFIG_DIR`, and asserts the
+contract end to end: the static UI and xterm vendor files, the first-run
+responses on an empty database, every validation refusal (each a `400` with a
+sentence), an `external` agent's whole lifecycle — so no CLI is spawned and no
+tokens are spent — a working directory deleted underneath an agent, the usage
+arithmetic including the delta accounting that stops a restart double-counting,
+deletion with child re-parenting, and the WebSocket. It exits non-zero on the
+first failed assertion and cleans up its temporary directories.
 
 Run it before opening a pull request. If you change the HTTP or WebSocket
 surface, update [`docs/API.md`](docs/API.md) in the same change and add an

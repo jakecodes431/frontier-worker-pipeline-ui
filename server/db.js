@@ -1,6 +1,20 @@
-import { DatabaseSync } from 'node:sqlite';
+import fs from 'node:fs';
 import path from 'node:path';
 import { DATA_DIR } from './config.js';
+
+// node:sqlite landed in Node 22. Importing it on an older runtime throws
+// ERR_UNKNOWN_BUILTIN_MODULE with no hint at all, so say what is wrong.
+let DatabaseSync;
+try {
+  ({ DatabaseSync } = await import('node:sqlite'));
+} catch (err) {
+  console.error(
+    `\nControl Room could not load node:sqlite (running Node ${process.versions.node}).\n` +
+    'node:sqlite ships with Node 22 and later. Install Node 22+ and run `npm start` again.\n' +
+    `Original error: ${err && err.message ? err.message : err}\n`,
+  );
+  process.exit(1);
+}
 
 const db = new DatabaseSync(path.join(DATA_DIR, 'control-room.sqlite'));
 db.exec(`
@@ -60,11 +74,46 @@ CREATE TABLE IF NOT EXISTS usage_samples (
   updated_at TEXT NOT NULL,
   PRIMARY KEY (agent_id, model, day)
 );
+CREATE TABLE IF NOT EXISTS usage_cursors (
+  agent_id TEXT NOT NULL,
+  model TEXT NOT NULL,
+  input_tokens INTEGER NOT NULL DEFAULT 0,
+  cache_read_tokens INTEGER NOT NULL DEFAULT 0,
+  cache_write_tokens INTEGER NOT NULL DEFAULT 0,
+  output_tokens INTEGER NOT NULL DEFAULT 0,
+  cost_usd REAL NOT NULL DEFAULT 0,
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY (agent_id, model)
+);
 CREATE INDEX IF NOT EXISTS idx_messages_agent ON messages(agent_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_events_agent ON events(agent_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_usage_day ON usage_samples(day);
 `);
 
+// One-time migration for databases written before usage_samples held per-day
+// DELTAS: seed each cursor from what was already recorded so the next refresh
+// adds only new usage instead of re-counting the whole session.
+if (!db.prepare('SELECT 1 FROM usage_cursors LIMIT 1').get() && db.prepare('SELECT 1 FROM usage_samples LIMIT 1').get()) {
+  db.exec(`INSERT INTO usage_cursors (agent_id, model, input_tokens, cache_read_tokens, cache_write_tokens, output_tokens, cost_usd, updated_at)
+    SELECT agent_id, model, SUM(input_tokens), SUM(cache_read_tokens), SUM(cache_write_tokens), SUM(output_tokens), SUM(cost_usd), datetime('now')
+    FROM usage_samples GROUP BY agent_id, model`);
+}
+
 const now = () => new Date().toISOString();
+
+// fs.existsSync on every agent of every state frame is wasteful; 5s of staleness
+// is plenty for "this agent's folder was deleted under it".
+const existsCache = new Map(); // path -> { at, exists }
+function dirExists(p) {
+  if (!p) return false;
+  const hit = existsCache.get(p);
+  if (hit && Date.now() - hit.at < 5000) return hit.exists;
+  let exists = false;
+  try { exists = fs.existsSync(p); } catch { exists = false; }
+  existsCache.set(p, { at: Date.now(), exists });
+  if (existsCache.size > 500) existsCache.clear();
+  return exists;
+}
 
 function rowToAgent(r) {
   if (!r) return null;
@@ -84,6 +133,7 @@ function rowToAgent(r) {
     task: r.task,
     note: r.note,
     cwd: r.cwd,
+    cwdExists: r.cwd ? dirExists(r.cwd) : false,
     worktree: r.worktree_json ? JSON.parse(r.worktree_json) : null,
     controlledBy: r.controlled_by,
     sessionId: r.session_id,
@@ -117,10 +167,18 @@ const stmts = {
   markRead: db.prepare("UPDATE messages SET read = 1 WHERE agent_id = ? AND direction = 'report'"),
   insertEvent: db.prepare('INSERT INTO events (agent_id,kind,data,created_at) VALUES (?,?,?,?)'),
   eventsFor: db.prepare('SELECT * FROM events WHERE agent_id = ? ORDER BY id DESC LIMIT ?'),
-  upsertUsage: db.prepare(`INSERT INTO usage_samples (agent_id,model,day,input_tokens,cache_read_tokens,cache_write_tokens,output_tokens,cost_usd,updated_at)
+  addUsage: db.prepare(`INSERT INTO usage_samples (agent_id,model,day,input_tokens,cache_read_tokens,cache_write_tokens,output_tokens,cost_usd,updated_at)
     VALUES (?,?,?,?,?,?,?,?,?)
-    ON CONFLICT(agent_id,model,day) DO UPDATE SET input_tokens=excluded.input_tokens, cache_read_tokens=excluded.cache_read_tokens,
+    ON CONFLICT(agent_id,model,day) DO UPDATE SET input_tokens=input_tokens+excluded.input_tokens, cache_read_tokens=cache_read_tokens+excluded.cache_read_tokens,
+      cache_write_tokens=cache_write_tokens+excluded.cache_write_tokens, output_tokens=output_tokens+excluded.output_tokens,
+      cost_usd=cost_usd+excluded.cost_usd, updated_at=excluded.updated_at`),
+  getCursor: db.prepare('SELECT * FROM usage_cursors WHERE agent_id = ? AND model = ?'),
+  setCursor: db.prepare(`INSERT INTO usage_cursors (agent_id,model,input_tokens,cache_read_tokens,cache_write_tokens,output_tokens,cost_usd,updated_at)
+    VALUES (?,?,?,?,?,?,?,?)
+    ON CONFLICT(agent_id,model) DO UPDATE SET input_tokens=excluded.input_tokens, cache_read_tokens=excluded.cache_read_tokens,
       cache_write_tokens=excluded.cache_write_tokens, output_tokens=excluded.output_tokens, cost_usd=excluded.cost_usd, updated_at=excluded.updated_at`),
+  dropCursors: db.prepare('DELETE FROM usage_cursors WHERE agent_id = ?'),
+  dropSamples: db.prepare('DELETE FROM usage_samples WHERE agent_id = ?'),
   usageSince: db.prepare('SELECT SUM(cost_usd) AS cost FROM usage_samples WHERE day >= ?'),
   usageByAgentDay: db.prepare('SELECT * FROM usage_samples WHERE agent_id = ?'),
 };
@@ -183,11 +241,57 @@ export const events = {
   },
 };
 
+const FIELDS = [
+  ['inputTokens', 'input_tokens'],
+  ['cacheReadTokens', 'cache_read_tokens'],
+  ['cacheWriteTokens', 'cache_write_tokens'],
+  ['outputTokens', 'output_tokens'],
+];
+
 export const usageSamples = {
-  upsert(agentId, model, day, u, cost) {
-    stmts.upsertUsage.run(agentId, model || 'unknown', day, u.inputTokens || 0, u.cacheReadTokens || 0, u.cacheWriteTokens || 0, u.outputTokens || 0, cost, now());
+  /**
+   * Record an agent's CUMULATIVE usage for one model and bank the increment
+   * against `day`.
+   *
+   * Transcripts are cumulative, so the daily spend windows must be fed the
+   * DELTA since the last reading, not the running total. Keying a running
+   * total by the agent's start day (what this used to do) both mis-dated spend
+   * — a session that started yesterday reported nothing "today" — and
+   * double-counted every restart, because a restart moved startedAt and opened
+   * a second row holding the whole session again.
+   *
+   * A cumulative figure that goes DOWN means the underlying session was
+   * replaced (a DeepSeek worker restarted into a fresh session file), so the
+   * new reading is banked whole and becomes the new baseline.
+   */
+  record(agentId, model, day, cumulative, cumulativeCost) {
+    const key = model || 'unknown';
+    const prev = stmts.getCursor.get(agentId, key);
+    const cost = Number(cumulativeCost) || 0;
+    const delta = {};
+    let restarted = false;
+    for (const [camel, col] of FIELDS) {
+      const next = Number(cumulative[camel]) || 0;
+      const was = prev ? Number(prev[col]) || 0 : 0;
+      if (next < was) restarted = true;
+      delta[camel] = next - was;
+    }
+    let deltaCost = cost - (prev ? Number(prev.cost_usd) || 0 : 0);
+    if (restarted || deltaCost < 0) {
+      for (const [camel] of FIELDS) delta[camel] = Number(cumulative[camel]) || 0;
+      deltaCost = cost;
+    }
+    const moved = deltaCost !== 0 || FIELDS.some(([camel]) => delta[camel] !== 0);
+    if (!moved) return false;
+    stmts.addUsage.run(agentId, key, day, delta.inputTokens, delta.cacheReadTokens, delta.cacheWriteTokens, delta.outputTokens, deltaCost, now());
+    stmts.setCursor.run(agentId, key, Number(cumulative.inputTokens) || 0, Number(cumulative.cacheReadTokens) || 0,
+      Number(cumulative.cacheWriteTokens) || 0, Number(cumulative.outputTokens) || 0, cost, now());
+    return true;
   },
+  /** Deleting an agent does not rewrite history; this is for tests and resets. */
+  forget(agentId) { stmts.dropCursors.run(agentId); stmts.dropSamples.run(agentId); },
   spendSince(day) { return stmts.usageSince.get(day)?.cost || 0; },
+  rows(agentId) { return stmts.usageByAgentDay.all(agentId); },
 };
 
 export default db;

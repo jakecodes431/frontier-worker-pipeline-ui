@@ -27,6 +27,8 @@
   </symbol>
 </svg>
 
+<a class="skip-link" href="#main">Skip to content</a>
+
 <div class="app">
 
   <!-- ------------------------------------------------ mobile top bar -->
@@ -131,7 +133,14 @@
   </aside>
 
   <!-- ------------------------------------------------------ the page -->
-  <main class="main" id="main">
+  <main class="main" id="main" tabindex="-1">
+    <!-- Connection banner: the socket carries every live update, so losing it
+         has to be visible on the page, not only as a dot in the rail. -->
+    <div class="netbar" id="netbar" hidden role="status" aria-live="polite">
+      <span class="netbar-dot" aria-hidden="true"></span>
+      <span class="netbar-text" id="netbar-text">Reconnecting to the control server…</span>
+      <button class="btn btn-xs" id="netbar-retry" type="button">Retry now</button>
+    </div>
     <section class="view" id="view-dashboard" aria-label="Dashboard"></section>
     <section class="view view-flush" id="view-cto" hidden aria-label="CTO chat"></section>
     <section class="view" id="view-hierarchy" hidden aria-label="Hierarchy">

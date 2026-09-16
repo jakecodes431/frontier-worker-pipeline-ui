@@ -69,13 +69,67 @@ export function chip(status) {
   return h('span', { class: 'chip', dataset: { status: s }, title: 'status: ' + s }, s);
 }
 
-/** Simple non-blocking toast. */
+/**
+ * Simple non-blocking toast.
+ *
+ * Identical messages collapse into one with a counter, and the stack is capped:
+ * when the server goes away every poller fails at once, and a wall of forty
+ * identical toasts is worse than the failure it reports.
+ */
+const recentToasts = new Map(); // message -> { el, countEl, n, at, timer }
+const TOAST_MAX = 4;
+
 export function toast(message, kind = 'info', ms = 4200) {
   const host = document.getElementById('toasts');
   if (!host) return;
-  const el = h('div', { class: 'toast', dataset: { kind } }, String(message));
+  const text = String(message);
+  const key = kind + '|' + text;
+  const seen = recentToasts.get(key);
+  if (seen && seen.el.isConnected) {
+    seen.n += 1;
+    setText(seen.countEl, `×${seen.n}`);
+    seen.countEl.hidden = false;
+    clearTimeout(seen.timer);
+    seen.timer = setTimeout(() => { seen.el.remove(); recentToasts.delete(key); }, ms);
+    return;
+  }
+  const countEl = h('span', { class: 'toast-count', hidden: true });
+  const el = h('div', {
+    class: 'toast', dataset: { kind },
+    role: kind === 'error' ? 'alert' : 'status',
+    title: 'Click to dismiss',
+    onclick: () => { el.remove(); recentToasts.delete(key); },
+  }, h('span', { class: 'toast-text' }, text), countEl);
   host.appendChild(el);
-  setTimeout(() => el.remove(), ms);
+  while (host.children.length > TOAST_MAX) host.firstElementChild.remove();
+  const timer = setTimeout(() => { el.remove(); recentToasts.delete(key); }, ms);
+  recentToasts.set(key, { el, countEl, n: 1, at: Date.now(), timer });
+}
+
+/**
+ * Keep Tab inside `container` while it is open, and give focus back to
+ * whatever had it when the container closes. Returns the release function.
+ */
+export function trapFocus(container, firstFocus) {
+  const previous = document.activeElement;
+  const selector = 'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+  const onKey = (ev) => {
+    if (ev.key !== 'Tab') return;
+    const items = Array.from(container.querySelectorAll(selector)).filter((el) => el.offsetParent !== null || el === document.activeElement);
+    if (!items.length) return;
+    const first = items[0];
+    const last = items[items.length - 1];
+    if (ev.shiftKey && document.activeElement === first) { ev.preventDefault(); last.focus(); }
+    else if (!ev.shiftKey && document.activeElement === last) { ev.preventDefault(); first.focus(); }
+  };
+  container.addEventListener('keydown', onKey);
+  if (firstFocus && typeof firstFocus.focus === 'function') firstFocus.focus();
+  return () => {
+    container.removeEventListener('keydown', onKey);
+    if (previous && typeof previous.focus === 'function' && previous.isConnected) {
+      try { previous.focus(); } catch { /* element went away */ }
+    }
+  };
 }
 
 /** Debounce helper for resize handlers. */

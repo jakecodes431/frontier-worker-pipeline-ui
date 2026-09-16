@@ -72,9 +72,11 @@ being typed in, so a human and an agent never fight over the same prompt.
 
 ## Screenshots
 
-**Dashboard** — what the fleet is spending and doing. Frontier-model dollars are
-API-equivalent estimates priced from token counts; worker dollars are real,
-metered API spend.
+**Dashboard** — what the fleet is spending and doing. Worker dollars are real API
+charges against whichever provider you point that runtime at; frontier-model
+dollars are API-equivalent estimates priced from token counts, because those
+sessions typically run on a subscription plan that is not billed per token. Read
+[Cost tracking](#cost-tracking) before you quote either number.
 
 ![Dashboard](docs/screenshots/dashboard.png)
 
@@ -94,15 +96,19 @@ reports folded into the same thread.
 
 **Prerequisites**
 
-- **Node.js >= 22.** The server uses the built-in `node:sqlite` module and
-  global `fetch`; there is no external database and no ORM.
+- **Node.js >= 22.13.** The server stores everything in the built-in
+  `node:sqlite` module — no external database, no ORM — and `bin/cr.js` and the
+  smoke test use global `fetch`. 22.13 is where `node:sqlite` stopped needing
+  `--experimental-sqlite`, which is why `package.json` sets `engines.node` to
+  `>=22.13.0`.
 - **git** on your `PATH` (worktrees, diffs, file listings).
 - **At least one agent CLI on your `PATH`.** Out of the box the config expects
   a Claude Code CLI (`claude`) for the frontier tiers. Any CLI that takes a
   prompt as an argument can be configured instead — see [Configuration](#configuration).
-- *(optional)* **DeepSeek Harness** for the cheap worker tier. Without it you
-  can still run the whole hierarchy on one runtime, or point the `deepseek`
-  runtime at whatever cheap CLI you use.
+- *(optional)* **DeepSeek Harness** for the cheap worker tier. It is not
+  required: it is simply the worker runtime the shipped `config/runtimes.json`
+  knows about. Without it the app still runs — you can drive the whole hierarchy
+  on one runtime, or point the `deepseek` runtime at whatever cheap CLI you use.
 
 **Install and run**
 
@@ -114,6 +120,32 @@ npm start
 ```
 
 Then open <http://127.0.0.1:4800>.
+
+A fresh database opens on a first-run page that explains the two ways in, and
+every view has its own empty state rather than a blank panel. Either register
+the session you are already sitting in (nothing is spawned; usage and
+transcript are read from that CLI's own session file):
+
+```sh
+node bin/cr.js register --name "CTO" --role cto --session <session-id>
+```
+
+…or have the control room start a process for you:
+
+```sh
+node bin/cr.js spawn --name "docs pass" --role worker --runtime deepseek \
+  --repo /path/to/repo --task "one line"
+```
+
+The **New agent** button does the same thing through the UI.
+
+No agents, no keys, no CLIs installed yet? <http://127.0.0.1:4800/?mock=1> runs
+the whole interface against an in-page fake server, and `?mock=1&empty=1` shows
+the first-run states.
+
+The other scripts in `package.json` are `npm run dev` (the same server under
+`node --watch`), `npm run cr -- <args>` (the agent-facing CLI), and
+`npm run check` (see below).
 
 `npm install` fetches a prebuilt `node-pty` binary for your platform; macOS,
 Linux and Windows are all supported. On Windows the pty layer uses ConPTY, so
@@ -128,9 +160,158 @@ Windows 10 1809 or newer is required.
 - The first time an agent CLI runs in a folder it may show a trust prompt or a
   one-time feature prompt. Answer it yourself in that agent's **Terminal** tab.
   The control room deliberately does **not** auto-accept trust prompts.
-- Nothing is spawned until you create an agent. `npm run check` boots the
-  server on a scratch port with a scratch data directory and exercises the API
-  without spawning any CLI or spending any tokens.
+- Nothing is spawned until you create an agent. `npm run check` syntax-checks
+  every shipped JavaScript file, refuses hard-coded home directories in the
+  source, runs the pure UI modules in Node, then runs `scripts/smoke.mjs`, which
+  boots the server on a free port with a scratch data directory and a scratch
+  `CR_CONFIG_DIR` and exercises the whole contract — the config expansion, the
+  first-run responses, every validation refusal, an `external` agent's
+  lifecycle, a working directory deleted underneath an agent, the usage delta
+  arithmetic, deletion and re-parenting, and the WebSocket — without spawning
+  any CLI or spending any tokens. It exits non-zero on the first broken
+  promise; that is the point of it.
+
+---
+
+## Set it up with your coding agent
+
+The Quick start above is the manual path — four commands you run yourself. This
+section is the same setup handed to an agent instead: find your tool below, run
+it in the folder you want the clone to land in, and paste the block into it. The
+prompt does the clone, the version check, the install, the launch, and then
+explains what you are looking at and how to register that session as the CTO
+node.
+
+Every prompt below is the same text; they are repeated per tool so each one is a
+single copy. The blocks are fenced, so GitHub gives you a copy button on each.
+
+**Claude Code** — install with `curl -fsSL https://claude.ai/install.sh | bash`
+(Windows PowerShell: `irm https://claude.ai/install.ps1 | iex`). Run `claude`,
+then paste. Headless equivalent: `claude -p "<prompt>"`. Needs a Pro, Max, Team,
+Enterprise or Console account.
+
+```
+Set up a local app for me, start to finish. Don't stop to ask unless you hit something you genuinely cannot decide.
+
+1. Clone https://github.com/jakecodes431/frontier-worker-pipeline-ui into a sensible folder here and cd into it.
+2. Check my Node version. It must be 22.13 or newer, because the server uses the built-in node:sqlite module, which stopped needing the --experimental-sqlite flag in 22.13. If it is older, tell me exactly how to upgrade on my OS and stop there.
+3. Check that git is on my PATH.
+4. Run npm install. It fetches a prebuilt node-pty binary for my platform; if it fails, read the actual error and tell me what is missing rather than guessing.
+5. Run npm start. Confirm the server is listening, then open http://127.0.0.1:4800 in my browser.
+6. Explain in plain language what I am looking at: the Dashboard, the Hierarchy board, and an agent's Chat, Terminal, Diff and Files tabs. Make the point that every agent in that tree is a real CLI process in a real pseudo-terminal, not a chat mock.
+7. Walk me through registering you - this very session - as the CTO node, using the "external" runtime, and tell me what I can do with it once it is there. Read the repo's README and docs/API.md for the exact steps instead of inventing them.
+
+Be straight with me as you go. This is a local, desktop-only app: nothing is hosted, there is no account and no sign-up, and it binds 127.0.0.1 with no authentication, so do not expose the port. It spawns real processes with my privileges. It ships no model access of its own - it drives agent CLIs already installed on my machine, billed to my own subscription or API keys, so it cannot spawn anything until at least one of those is on my PATH and logged in.
+```
+
+**OpenAI Codex CLI** — install with `npm install -g @openai/codex`. The
+interactive form is what this prompt is written for: run `codex`, then paste.
+Non-interactively you must open the sandbox — `codex exec --sandbox
+workspace-write "<prompt>"` — because `codex exec` runs in a read-only sandbox
+by default, and a read-only run cannot do the clone, the `npm install` or the
+server start
+([non-interactive mode](https://developers.openai.com/codex/noninteractive)).
+
+```
+Set up a local app for me, start to finish. Don't stop to ask unless you hit something you genuinely cannot decide.
+
+1. Clone https://github.com/jakecodes431/frontier-worker-pipeline-ui into a sensible folder here and cd into it.
+2. Check my Node version. It must be 22.13 or newer, because the server uses the built-in node:sqlite module, which stopped needing the --experimental-sqlite flag in 22.13. If it is older, tell me exactly how to upgrade on my OS and stop there.
+3. Check that git is on my PATH.
+4. Run npm install. It fetches a prebuilt node-pty binary for my platform; if it fails, read the actual error and tell me what is missing rather than guessing.
+5. Run npm start. Confirm the server is listening, then open http://127.0.0.1:4800 in my browser.
+6. Explain in plain language what I am looking at: the Dashboard, the Hierarchy board, and an agent's Chat, Terminal, Diff and Files tabs. Make the point that every agent in that tree is a real CLI process in a real pseudo-terminal, not a chat mock.
+7. Walk me through registering you - this very session - as the CTO node, using the "external" runtime, and tell me what I can do with it once it is there. Read the repo's README and docs/API.md for the exact steps instead of inventing them.
+
+Be straight with me as you go. This is a local, desktop-only app: nothing is hosted, there is no account and no sign-up, and it binds 127.0.0.1 with no authentication, so do not expose the port. It spawns real processes with my privileges. It ships no model access of its own - it drives agent CLIs already installed on my machine, billed to my own subscription or API keys, so it cannot spawn anything until at least one of those is on my PATH and logged in.
+```
+
+**Cursor CLI** — install with `curl https://cursor.com/install -fsS | bash`
+(Windows PowerShell: `irm 'https://cursor.com/install?win32=true' | iex`). Run
+`agent`, then paste. Headless equivalent: `agent -p "<prompt>" --force` — without
+`--force`, `-p` only proposes the file changes instead of making them.
+
+```
+Set up a local app for me, start to finish. Don't stop to ask unless you hit something you genuinely cannot decide.
+
+1. Clone https://github.com/jakecodes431/frontier-worker-pipeline-ui into a sensible folder here and cd into it.
+2. Check my Node version. It must be 22.13 or newer, because the server uses the built-in node:sqlite module, which stopped needing the --experimental-sqlite flag in 22.13. If it is older, tell me exactly how to upgrade on my OS and stop there.
+3. Check that git is on my PATH.
+4. Run npm install. It fetches a prebuilt node-pty binary for my platform; if it fails, read the actual error and tell me what is missing rather than guessing.
+5. Run npm start. Confirm the server is listening, then open http://127.0.0.1:4800 in my browser.
+6. Explain in plain language what I am looking at: the Dashboard, the Hierarchy board, and an agent's Chat, Terminal, Diff and Files tabs. Make the point that every agent in that tree is a real CLI process in a real pseudo-terminal, not a chat mock.
+7. Walk me through registering you - this very session - as the CTO node, using the "external" runtime, and tell me what I can do with it once it is there. Read the repo's README and docs/API.md for the exact steps instead of inventing them.
+
+Be straight with me as you go. This is a local, desktop-only app: nothing is hosted, there is no account and no sign-up, and it binds 127.0.0.1 with no authentication, so do not expose the port. It spawns real processes with my privileges. It ships no model access of its own - it drives agent CLIs already installed on my machine, billed to my own subscription or API keys, so it cannot spawn anything until at least one of those is on my PATH and logged in.
+```
+
+**Gemini CLI** — install with `npm install -g @google/gemini-cli`. Run `gemini`,
+then paste. Headless equivalent: `gemini -p "<prompt>"`, or `gemini -i
+"<prompt>"` to run it and stay in the session.
+
+```
+Set up a local app for me, start to finish. Don't stop to ask unless you hit something you genuinely cannot decide.
+
+1. Clone https://github.com/jakecodes431/frontier-worker-pipeline-ui into a sensible folder here and cd into it.
+2. Check my Node version. It must be 22.13 or newer, because the server uses the built-in node:sqlite module, which stopped needing the --experimental-sqlite flag in 22.13. If it is older, tell me exactly how to upgrade on my OS and stop there.
+3. Check that git is on my PATH.
+4. Run npm install. It fetches a prebuilt node-pty binary for my platform; if it fails, read the actual error and tell me what is missing rather than guessing.
+5. Run npm start. Confirm the server is listening, then open http://127.0.0.1:4800 in my browser.
+6. Explain in plain language what I am looking at: the Dashboard, the Hierarchy board, and an agent's Chat, Terminal, Diff and Files tabs. Make the point that every agent in that tree is a real CLI process in a real pseudo-terminal, not a chat mock.
+7. Walk me through registering you - this very session - as the CTO node, using the "external" runtime, and tell me what I can do with it once it is there. Read the repo's README and docs/API.md for the exact steps instead of inventing them.
+
+Be straight with me as you go. This is a local, desktop-only app: nothing is hosted, there is no account and no sign-up, and it binds 127.0.0.1 with no authentication, so do not expose the port. It spawns real processes with my privileges. It ships no model access of its own - it drives agent CLIs already installed on my machine, billed to my own subscription or API keys, so it cannot spawn anything until at least one of those is on my PATH and logged in.
+```
+
+**GitHub Copilot CLI** — install with `npm install -g @github/copilot` (Node 22+,
+and an active Copilot subscription). Run `copilot` and answer `/login` on first
+run, then paste. Headless equivalent: `copilot -p '<prompt>'`.
+
+```
+Set up a local app for me, start to finish. Don't stop to ask unless you hit something you genuinely cannot decide.
+
+1. Clone https://github.com/jakecodes431/frontier-worker-pipeline-ui into a sensible folder here and cd into it.
+2. Check my Node version. It must be 22.13 or newer, because the server uses the built-in node:sqlite module, which stopped needing the --experimental-sqlite flag in 22.13. If it is older, tell me exactly how to upgrade on my OS and stop there.
+3. Check that git is on my PATH.
+4. Run npm install. It fetches a prebuilt node-pty binary for my platform; if it fails, read the actual error and tell me what is missing rather than guessing.
+5. Run npm start. Confirm the server is listening, then open http://127.0.0.1:4800 in my browser.
+6. Explain in plain language what I am looking at: the Dashboard, the Hierarchy board, and an agent's Chat, Terminal, Diff and Files tabs. Make the point that every agent in that tree is a real CLI process in a real pseudo-terminal, not a chat mock.
+7. Walk me through registering you - this very session - as the CTO node, using the "external" runtime, and tell me what I can do with it once it is there. Read the repo's README and docs/API.md for the exact steps instead of inventing them.
+
+Be straight with me as you go. This is a local, desktop-only app: nothing is hosted, there is no account and no sign-up, and it binds 127.0.0.1 with no authentication, so do not expose the port. It spawns real processes with my privileges. It ships no model access of its own - it drives agent CLIs already installed on my machine, billed to my own subscription or API keys, so it cannot spawn anything until at least one of those is on my PATH and logged in.
+```
+
+**Cline CLI** — install with `npm install -g cline` (Node 20+, 22 recommended).
+Run `cline`, then paste. You can also pass the whole prompt as a positional
+argument: `cline "<prompt>"`.
+
+```
+Set up a local app for me, start to finish. Don't stop to ask unless you hit something you genuinely cannot decide.
+
+1. Clone https://github.com/jakecodes431/frontier-worker-pipeline-ui into a sensible folder here and cd into it.
+2. Check my Node version. It must be 22.13 or newer, because the server uses the built-in node:sqlite module, which stopped needing the --experimental-sqlite flag in 22.13. If it is older, tell me exactly how to upgrade on my OS and stop there.
+3. Check that git is on my PATH.
+4. Run npm install. It fetches a prebuilt node-pty binary for my platform; if it fails, read the actual error and tell me what is missing rather than guessing.
+5. Run npm start. Confirm the server is listening, then open http://127.0.0.1:4800 in my browser.
+6. Explain in plain language what I am looking at: the Dashboard, the Hierarchy board, and an agent's Chat, Terminal, Diff and Files tabs. Make the point that every agent in that tree is a real CLI process in a real pseudo-terminal, not a chat mock.
+7. Walk me through registering you - this very session - as the CTO node, using the "external" runtime, and tell me what I can do with it once it is there. Read the repo's README and docs/API.md for the exact steps instead of inventing them.
+
+Be straight with me as you go. This is a local, desktop-only app: nothing is hosted, there is no account and no sign-up, and it binds 127.0.0.1 with no authentication, so do not expose the port. It spawns real processes with my privileges. It ships no model access of its own - it drives agent CLIs already installed on my machine, billed to my own subscription or API keys, so it cannot spawn anything until at least one of those is on my PATH and logged in.
+```
+
+**Not an agent CLI: Aider.** Aider is an edit-focused pair-programming
+assistant, not a general-purpose agent, so it does not belong in the list
+above. Point it at a repo you have already cloned and it will write code and
+commit it; it will not run an eight-step setup for you — cloning, installing,
+starting a long-lived server and opening a browser are outside what it does.
+Use the Quick start by hand instead. (Installing it also needs Python:
+`python -m pip install aider-install && aider-install`.)
+
+Two things the prompts cannot do for you. The agent still needs whatever
+permission mode lets it run `git`, `npm` and a long-lived server — most of these
+tools ask once. And `npm start` runs in the foreground, so an agent that waits
+for the command to exit will sit there; tell it to background the server or start
+it yourself in a second terminal if it stalls.
 
 ---
 
@@ -184,7 +365,7 @@ Each runtime entry:
 | `resumeArgs` | Optional. Used by **Restart** when the session can be resumed by id. |
 | `defaults` | `model`, `effort`, `permissionMode` when the caller does not pass them. |
 | `env` | Extra environment for this runtime (a leading `~` is expanded). |
-| `scrubEnvContaining`, `keepEnv` | Credential hygiene: delete inherited variables whose *name* contains any of these substrings (e.g. `KEY`, `TOKEN`, `SECRET`) except the ones explicitly kept. The control room never reads the values it keeps — it only passes them through. |
+| `scrubEnvContaining`, `keepEnv` | Credential hygiene, opt-in per runtime: delete inherited variables whose *name* contains any of these substrings (e.g. `KEY`, `TOKEN`, `SECRET`) except the ones explicitly kept. Only the `deepseek` adapter applies them today, and only the shipped `deepseek` runtime sets them; the `claude` runtime passes the environment through. The control room never reads the values it keeps — it only passes them through. |
 | `transcriptRoot` / `sessionStore` | Where that CLI writes its session transcripts, so usage and chat can be read back. |
 | `idleAfterSilenceMs` | How long a silent-but-finished session waits before it is shown as `idle` rather than `running`. |
 | `oneShot` | True for workers that run one task and exit. |
@@ -196,7 +377,9 @@ Three runtimes ship in the default config:
 - **`deepseek`** — a headless DeepSeek Harness worker, one task then exit. It
   resolves to `${DSH_REPO}/apps/cli/lib/bin.js`, so set `DSH_REPO` (or edit the
   config) to point at your own install. Usage comes from the harness session
-  store under `${DSH_HOME}`.
+  store under `${DSH_HOME}`. Optional: nothing in the server depends on this
+  runtime existing, and you can replace the whole entry with any other CLI that
+  takes the prompt as its last argument.
 - **`external`** — a session the control room did *not* spawn (for example a CTO
   you are running yourself in a desktop app). It appears in the tree and its
   usage is tracked by session id; messages to it are queued in its inbox rather
@@ -219,8 +402,8 @@ Adding a fourth runtime is a config entry plus a small adapter — see
 | `CR_PARENT_ID` | agents | The agent's parent id, or empty for a top-level agent. |
 | provider keys | the agent CLIs | e.g. an API key for your worker CLI. These belong to that CLI, not to the control room — set them in your shell or in the runtime's `env`. |
 
-Keep your `.env` out of version control — `.gitignore` already covers `data/`,
-`node_modules/` and `.worktrees/`.
+`.gitignore` already covers `.env` (and `.env.*`, except `.env.example`), plus
+`data/`, `node_modules/`, `.worktrees/` and `config/*.local.json`.
 
 ### `config/pricing.json`
 
@@ -248,6 +431,9 @@ brief. The agent-facing CLI is a single dependency-free file, `bin/cr.js`:
 node bin/cr.js spawn --name "migrate-config" --role worker --runtime deepseek \
   --repo /path/to/repo --task "one line" --brief-file brief.md --wait
 
+node bin/cr.js register --name "CTO" --role cto --session <id>
+                                    # track a session nothing spawned (no process starts)
+
 node bin/cr.js list                 # your children: status, tokens, cost
 node bin/cr.js tree                 # the whole hierarchy
 node bin/cr.js wait <id...>         # block until they reach a terminal status
@@ -258,6 +444,7 @@ node bin/cr.js report "text"        # short report to your parent's inbox
 node bin/cr.js inbox                # reports your children sent you
 node bin/cr.js status blocked --note "the exact question"
 node bin/cr.js stop <id> | restart <id> | agent <id> | usage | health
+node bin/cr.js help                 # the same list, from the running CLI
 ```
 
 Every command is a thin wrapper over the HTTP API in
@@ -265,8 +452,11 @@ Every command is a thin wrapper over the HTTP API in
 
 Two rules the server enforces rather than trusts:
 
-- `send` from a parent is refused — and the message queued to the inbox —
-  while a **human** holds control of the target, or while the target is paused.
+- `send` from a parent is refused with `409` while a **human** holds control of
+  the target — and only in that case is the text queued to the target's inbox
+  instead. A `send` to a paused agent is refused with `409` and dropped; so is
+  one to an agent with no live terminal. (A `send` to an `external` agent is
+  always queued to its inbox, since there is no terminal to type into.)
 - `status` only accepts `done`, `blocked`, `failed`, `running`, `idle`. A child
   marking itself `blocked` automatically posts `BLOCKED: <note>` to its
   parent's inbox.
@@ -307,9 +497,11 @@ saving from delegating to cheap workers.
 
 - Token counts are **real**. They are read from each CLI's own session
   transcript on your disk — the same numbers the CLI recorded.
-- **Cheap-worker API costs are real charges**, priced at the worker rows of
-  `config/pricing.json`, because those calls are billed per token against an
-  API key.
+- **Cheap-worker costs are real API charges** — those calls are billed per token
+  against whichever provider key that runtime uses. The dollar figure shown is
+  still your own arithmetic: real token counts times the worker rows of
+  `config/pricing.json`, which is a price sheet you maintain, not an invoice you
+  were sent.
 - **Frontier dollar figures are API-equivalent ESTIMATES.** If your frontier
   sessions run on a *plan subscription*, you are not billed per token at all —
   the subscription is billed on its own terms. The control room multiplies the
@@ -335,8 +527,10 @@ This is a local developer tool. It is not hardened, and it is not meant to be.
   `0.0.0.0`. If you must reach it from elsewhere, forward the loopback port over
   SSH and understand what you are doing.
 - **It spawns real processes** with your user's privileges, in directories you
-  name, with your environment (minus the scrubbed credential-looking
-  variables). The agents it starts can write files and run commands. Give them
+  name, and they inherit your environment — minus the agent-CLI markers the
+  adapters always strip, and minus the credential-looking variables for a
+  runtime that opts into scrubbing (in the shipped config, the `deepseek`
+  worker). The agents it starts can write files and run commands. Give them
   worktrees, not your home directory.
 - **It reads CLI transcripts on your machine** to compute usage — the JSONL and
   JSON session files those CLIs already write under your home directory. Those
@@ -346,9 +540,11 @@ This is a local developer tool. It is not hardened, and it is not meant to be.
   under `data/scrollback/`. Treat `data/` as sensitive; it is gitignored.
 - There is **no sandbox**. Permission modes are whatever the underlying agent
   CLI supports, passed straight through from the config.
-- The control room does not handle provider credentials. It scrubs
-  credential-looking environment variables from spawned runtimes except the ones
-  a runtime explicitly keeps, and it never reads their values.
+- The control room does not handle provider credentials and never reads the
+  values of the variables it passes on. Where a runtime asks for it
+  (`scrubEnvContaining` / `keepEnv`), it deletes credential-looking variables
+  from that runtime's environment before spawning; a runtime that does not ask —
+  including the shipped `claude` one — inherits them.
 
 ---
 
@@ -362,18 +558,26 @@ server/            HTTP + WebSocket server, PTY manager, SQLite, git helpers
   pty.js           node-pty process manager and scrollback
   git.js           worktrees, diff, file listing, process-tree kill
   usage.js         transcript readers (per CLI) -> token buckets
-  adapters/        one adapter per runtime: build argv/env, read usage + chat
+  adapters/index.js  one adapter per runtime (claude, deepseek, external):
+                   build argv/env, stage briefs, read usage + chat
 bin/cr.js          the agent-facing CLI (no dependencies)
 ui/                browser UI: vanilla ES modules, no build step
-  views/           dashboard, hierarchy, agent panel, new-agent form
+  views/           dashboard, hierarchy, agent panel, new-agent form, CTO chat
   views/tabs/      chat, terminal (xterm.js), diff, files, logs
   lib/             api, ws, store, dom, formatting
+  mock.js          in-page fake server for UI work (`?mock=1`)
 config/            runtimes.json, pricing.json, protocol.md
-scripts/smoke.mjs  offline API smoke test (`npm run check`)
+scripts/smoke.mjs  offline API smoke test (run by `npm run check`)
+scripts/launch-orchestrator.mjs  spawn an orchestrator through the running
+                   server's API (`--help` for options)
+briefs/            what a brief is, plus example orchestrator/worker briefs
+examples/          a worked end-to-end run (one orchestrator, three workers)
 docs/API.md        the HTTP + WebSocket contract
-docs/screenshots/  images for this README (and how to take them safely)
-.claude/skills/    agent skills shipped with the repo; third-party ones are
-                   credited in NOTICE and keep their own LICENSE files
+docs/TROUBLESHOOTING.md  the real failure modes and what to do about them
+docs/screenshots/  the images used in this README
+.claude/           agent skills and an agent definition shipped with the repo;
+                   third-party skills are credited in NOTICE and keep their own
+                   LICENSE files
 data/              SQLite, scrollback, staged briefs (gitignored)
 ```
 
@@ -385,9 +589,9 @@ An honest list of what is unfinished or deliberately absent:
 
 - **No authentication or multi-user support**, and none planned. This is a
   single-user local tool.
-- **No rate-limit or quota surfacing.** The usage API has a `limits` field and
-  it is always `null`; there is no integration with any provider's limit
-  reporting yet.
+- **No rate-limit or quota surfacing.** The usage API has a `limits` field whose
+  per-runtime entries (`claude`, `deepseek`) are always `null`; there is no
+  integration with any provider's limit reporting yet.
 - **Two real runtime adapters** (one frontier CLI, one cheap CLI) plus
   `external`. Other CLIs need a small adapter, mostly to parse their transcript
   format.
@@ -401,13 +605,30 @@ An honest list of what is unfinished or deliberately absent:
 - **Worktrees are never cleaned up automatically** (see above).
 - **Frontier cost figures are estimates** against a hand-maintained price sheet
   (see [Cost tracking](#cost-tracking)).
-- **Testing is one offline smoke script.** There is no unit test suite.
+- **Testing is one offline smoke script.** There is no unit test suite:
+  `scripts/smoke.mjs` is the whole gate, and it asserts behaviour through the
+  real HTTP and WebSocket surfaces rather than through unit seams.
 - **The UI ships an in-page mock server** (`ui/mock.js`, enabled with `?mock=1`)
   for working on the interface without spawning anything. It is developer
   scaffolding kept in step by hand, not a guaranteed-faithful demo mode.
-- **Chat tabs are read-only renderings** of a CLI's transcript. To say something
-  to an agent you type into its terminal (directly, or via `send`).
+- **Chat tabs render a CLI's own transcript**, merged with the control room's
+  message log; the rendering is read-only in the sense that nothing there is
+  editable. The composer below it is not a separate chat layer: it posts to the
+  same `send` route as `cr send` (as `X-Sender: human`), which types the text
+  into the agent's real terminal, or queues it to the inbox for an `external`
+  agent.
 - No packaging, no installer, no auto-update. Clone and `npm start`.
+
+---
+
+## When something goes wrong
+
+[docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) covers the failure modes that
+actually happen: a Node without `node:sqlite`, a busy port, an agent CLI that is
+not signed in, the folder-trust prompt, no worker harness installed, a working
+directory deleted underneath an agent, "process exited" in the Terminal tab, an
+offline banner that will not clear, spend figures that look wrong, and a failing
+`npm run check`.
 
 ---
 

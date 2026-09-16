@@ -124,9 +124,14 @@ h1, h2, h3, h4 { margin: 0; color: var(--ink); font-weight: 600; line-height: 1.
 p { margin: 0; }
 code { font-family: var(--mono); font-size: .92em; }
 
+/* The gem-deep focus ring, on every focusable thing. Fields keep their
+   ink border AND take the ring when focus arrives from the keyboard, so the
+   indicator never depends on the low-contrast halo alone. */
 :focus-visible { outline: 2px solid var(--gem-deep); outline-offset: 2px; border-radius: 4px; }
 :focus:not(:focus-visible) { outline: none; }
-input:focus-visible, textarea:focus-visible, select:focus-visible { outline: none; }
+input:focus-visible, textarea:focus-visible, select:focus-visible { outline: 2px solid var(--gem-deep); outline-offset: 1px; }
+/* Rows and cards are wide; the ring hugs them rather than the page gutter. */
+.node:focus-visible, .kcard:focus-visible, .needs-row:focus-visible, .file-row:focus-visible { outline-offset: -2px; }
 ::selection { background: var(--cave-2); color: var(--ink); }
 
 button, summary, nav, [role="tab"] { -webkit-user-select: none; user-select: none; }
@@ -145,8 +150,8 @@ button, summary, nav, [role="tab"] { -webkit-user-select: none; user-select: non
 .spacer { margin-left: auto; }
 .tnum   { font-variant-numeric: tabular-nums; }
 
-/* The engraved caps micro-label. It names an adjacent value; it is never
-   decoration on its own. */
+/* The engraved caps micro-label. It labels an adjacent
+   value; it is never decoration on its own. */
 .label, .eyebrow {
   display: block;
   font-size: 11px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase;
@@ -479,7 +484,8 @@ input[type="text"], input[type="search"], textarea, select {
   transition: border-color var(--fast) var(--ease), box-shadow var(--fast) var(--ease);
 }
 textarea { min-height: 64px; resize: vertical; font-family: inherit; }
-input::placeholder, textarea::placeholder { color: var(--ink-3); opacity: .8; }
+/* Placeholders are body text for contrast purposes: no opacity dimming. */
+input::placeholder, textarea::placeholder { color: var(--ink-3); opacity: 1; }
 input:focus, textarea:focus, select:focus { border-color: var(--ink); box-shadow: 0 0 0 3px var(--cave); }
 select {
   appearance: none;
@@ -610,7 +616,9 @@ button.link { background: none; border: 0; padding: 0; font: inherit; }
 .node > .chip { justify-self: start; }
 
 .node-main { display: flex; align-items: center; gap: 10px; min-width: 0; }
-.node-rail { font-family: var(--mono); font-size: 12px; color: var(--cave-rule); white-space: pre; flex: 0 0 auto; }
+/* The tree connector is decorative (aria-hidden) but still has to be legible:
+   cave-rule on white reads at 1.7:1, which is a ghost. */
+.node-rail { font-family: var(--mono); font-size: 12px; color: var(--control-line); white-space: pre; flex: 0 0 auto; }
 .node-rail:empty { display: none; }
 .node-ident { min-width: 0; }
 .node-name { font-size: 14px; font-weight: 600; color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -879,6 +887,8 @@ pre.diffstat {
   white-space: pre;
 }
 .code span { display: block; }
+/* A notice rendered into the code pane must not inherit `white-space: pre`. */
+.code .notice, .code .error-box { white-space: normal; }
 .dl-add  { color: var(--ok-ink); background: rgba(8, 116, 84, .07); }
 .dl-del  { color: var(--bad-ink); background: rgba(180, 35, 24, .06); }
 .dl-hunk { color: var(--ink-2); background: var(--plate); }
@@ -968,7 +978,7 @@ pre.diffstat {
 .cto-face-gap { background: none; box-shadow: none; }
 
 .cto-scroll { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 16px 24px 20px; background: var(--ground); }
-.cto-scroll:focus-visible { outline: none; }
+.cto-scroll:focus-visible { outline: 2px solid var(--gem-deep); outline-offset: -3px; }
 .cto-list { display: flex; flex-direction: column; gap: 6px; max-width: 880px; margin: 0 auto; }
 
 .cto-day { display: flex; align-items: center; gap: 12px; margin: 14px 0 6px; }
@@ -1167,6 +1177,110 @@ textarea.cto-input:focus { outline: none; border: 0; box-shadow: none; }
 .boot-error-card h1 { font-size: 20px; margin-bottom: 10px; }
 .boot-error-card p { font-size: 13.5px; color: var(--ink-2); margin-bottom: 10px; }
 .boot-error-hint code { background: var(--plate); padding: 1px 5px; border-radius: 4px; }
+
+/* ==========================================================================
+   STATES — first run, offline, missing folders, field errors
+
+   These are the screens a stranger meets first and the ones an operator meets
+   when something breaks. They use the same plate anatomy as everything else;
+   nothing here introduces a new colour.
+   ========================================================================== */
+
+/* the keyboard user's way past the rail */
+.skip-link {
+  position: fixed; top: 8px; left: 8px; z-index: 300;
+  transform: translateY(-200%);
+  background: var(--ink); color: var(--ink-inverse);
+  padding: 9px 14px; border-radius: var(--r-control);
+  font-size: 13.5px; font-weight: 600; text-decoration: none;
+  box-shadow: var(--lift-2);
+}
+.skip-link:focus, .skip-link:focus-visible { transform: none; }
+
+/* connection banner: the socket carries every live update, so its loss is
+   stated on the page, not only as a dot in the rail */
+.netbar {
+  position: fixed; top: 12px; left: 50%; transform: translateX(-50%);
+  z-index: 110;
+  display: flex; align-items: center; gap: 10px;
+  padding: 8px 10px 8px 14px;
+  border-radius: 999px;
+  background: var(--ink); color: var(--ink-inverse);
+  box-shadow: var(--lift-3);
+  font-size: 13px; max-width: min(620px, calc(100vw - 32px));
+}
+.netbar[hidden] { display: none; }
+.netbar-dot {
+  width: 8px; height: 8px; border-radius: 50%; background: var(--bad); flex: 0 0 auto;
+  animation: fade-pulse 1.4s ease-in-out infinite;
+}
+.netbar[data-state="connecting"] .netbar-dot { background: var(--warn); }
+.netbar-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.netbar .btn {
+  flex: 0 0 auto; background: rgba(255, 255, 255, .14); border-color: transparent; color: var(--ink-inverse);
+}
+.netbar .btn:hover:not(:disabled) { background: rgba(255, 255, 255, .26); border-color: transparent; }
+
+/* numbered first-run steps */
+.plate-pad { padding: 20px 24px 22px; }
+.plate-foot {
+  padding: 12px 24px; border-top: 1px solid var(--rule);
+  background: var(--ground-sunk); font-size: 12.5px; color: var(--ink-2);
+}
+.steps { list-style: none; margin: 0; padding: 0; }
+.step {
+  display: grid; grid-template-columns: 28px minmax(0, 1fr); gap: 14px;
+  padding: 18px 24px; border-bottom: 1px solid var(--rule);
+}
+.step:last-child { border-bottom: 0; }
+.step-n {
+  width: 28px; height: 28px; border-radius: 50%;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: var(--cave); color: var(--ink);
+  font-size: 12px; font-weight: 700; box-shadow: inset 0 0 0 1px var(--cave-rule);
+}
+.step-body { min-width: 0; }
+.step-title { font-size: 15px; font-weight: 600; letter-spacing: -.012em; margin-bottom: 4px; }
+.step-text { font-size: 13.5px; line-height: 1.6; color: var(--ink-2); max-width: 72ch; }
+.step .btn-row, .step .code-inline { margin-top: 12px; }
+
+.code-inline {
+  margin: 0; padding: 12px 14px; overflow-x: auto;
+  background: var(--ground-sunk); border: 1px solid var(--rule); border-radius: var(--r-control);
+  font-size: 11.5px; line-height: 1.6; color: var(--ink-2); white-space: pre;
+}
+
+/* a row whose working directory has gone */
+.node-warn {
+  flex: 0 0 auto; width: 18px; height: 18px; border-radius: 50%;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: var(--warn-soft); color: var(--warn-ink);
+  font-size: 11px; font-weight: 700; cursor: help;
+}
+.node-warn[hidden] { display: none; }
+
+.panel-warn {
+  margin: 10px 0 0; padding: 8px 12px; border-radius: var(--r-control);
+  background: var(--warn-soft); color: var(--warn-ink);
+  font-size: 12.5px; line-height: 1.5;
+}
+.panel-warn[data-tone="bad"] { background: var(--bad-soft); color: var(--bad-ink); }
+.panel-warn[hidden] { display: none; }
+
+.badge-bad { background: var(--bad-soft); color: var(--bad-ink); border-color: rgba(180, 35, 24, .28); margin-left: 8px; }
+
+/* form field errors */
+.field-error { font-size: 12px; color: var(--bad-ink); }
+.field-error[hidden] { display: none; }
+.field[data-invalid="1"] input,
+.field[data-invalid="1"] textarea,
+.field[data-invalid="1"] select { border-color: var(--bad); }
+.field > label .req { color: var(--bad-ink); }
+
+.toast-text { min-width: 0; }
+.toast-count { margin-left: auto; font-variant-numeric: tabular-nums; color: var(--ink-3); font-size: 12px; }
+.toast { cursor: pointer; pointer-events: auto; }
+.toast-count[hidden] { display: none; }
 
 /* ==========================================================================
    RESPONSIVE

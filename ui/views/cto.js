@@ -2,9 +2,10 @@
 //
 // The transcript is a merge of two sources on one clock: the parsed CLI
 // transcript and the control room's own message log (reports from child
-// agents). Turns from the same speaker group under one avatar; a tool call is
-// a compact pill rather than a bubble, so it is always visible but never
-// mistaken for something the agent said.
+// agents). Turns from the same speaker group under one avatar (a spacer keeps
+// the column straight where a face is suppressed); a tool call is a compact
+// pill rather than a bubble, so it is always visible but never mistaken for
+// something the agent said; the waiting state stands where the reply will land.
 //
 // Why it is capped AND windowed: a long-running CTO session runs to thousands
 // of turns, which is far more than anyone scrolls and more than the DOM should
@@ -17,10 +18,10 @@
 // never disabled (queue rather than block), and focus returns to it after a
 // pointer send.
 
-import { h, replace, clear, toast, setText } from '../lib/dom.js';
+import { h, replace, clear, toast, setText, qs } from '../lib/dom.js';
 import * as f from '../lib/format.js';
 import api from '../lib/api.js';
-import { store, getAgents, getAgent, select } from '../lib/store.js';
+import { store, getAgents, getAgent, getConfig, select } from '../lib/store.js';
 
 const POLL_MS = 5000;
 /** Newest N merged items kept in memory. The session is far longer than this. */
@@ -201,21 +202,59 @@ export function mountCto({ view, badge }) {
       agentId = id;
       transcript = []; messages = []; lastSig = ''; shown = WINDOW;
       expanded.clear(); queuedIds.clear();
-      if (active) refresh();
+      if (!id) renderNoCto();
+      else if (active) refresh();
     }
     renderHead(a);
+    setComposerEnabled(Boolean(id));
     return a;
+  }
+
+  function setComposerEnabled(on) {
+    textarea.disabled = !on;
+    sendBtn.disabled = !on;
+    textarea.placeholder = on ? 'Message the CTO…' : 'Register a CTO agent first';
+    form.dataset.disabled = on ? '0' : '1';
+  }
+
+  /**
+   * There is no agent with role "cto" yet. This is the state a fresh install
+   * opens in, so it explains what a CTO is here and how to get one — the view
+   * used to sit on "Loading the CTO session…" forever.
+   */
+  function renderNoCto() {
+    const cfg = getConfig() || {};
+    replace(scroll, h('div', { class: 'cto-empty' },
+      h('div', { class: 'cto-empty-mark' }, iconChat()),
+      h('p', { class: 'cto-empty-title' }, 'No CTO agent yet'),
+      h('p', { class: 'cto-empty-body' },
+        'The CTO is the top of the tree: the one agent you talk to, which delegates to orchestrators and workers. ',
+        'This page is its conversation. Create an agent with the role ',
+        h('strong', null, 'cto'), ' and it takes over here.'),
+      h('div', { class: 'btn-row', style: { justifyContent: 'center', marginTop: '16px' } },
+        h('button', {
+          class: 'btn btn-primary', type: 'button',
+          onclick: () => { const b = qs('#new-agent-btn') || qs('#new-agent-btn-mobile'); if (b) b.click(); },
+        }, 'New agent')),
+      h('p', { class: 'cto-empty-body', style: { marginTop: '18px' } },
+        'Registering the session you are already in — the usual case — means runtime ',
+        h('code', { class: 'mono' }, 'external'), ' and its session id, or from a terminal:'),
+      h('pre', { class: 'code-inline mono' },
+        `node ${cfg.crBin || 'bin/cr.js'} register --name "CTO" --role cto --session <session-id>`)));
   }
 
   function renderHead(a) {
     if (!a) {
       setText(headName, 'CTO');
-      setText(headSub, 'No agent with role "cto" in state yet.');
+      setText(headSub, 'nothing registered at the top of the tree yet');
       clear(headStats);
-      openBtn.disabled = true;
+      openBtn.hidden = true;
+      headChip.hidden = true;
       return;
     }
+    openBtn.hidden = false;
     openBtn.disabled = false;
+    headChip.hidden = false;
     setText(headName, a.name || a.id);
     const bits = [a.model || a.runtime || '—'];
     if (a.runtime === 'external') bits.push('external session');
@@ -226,10 +265,11 @@ export function mountCto({ view, badge }) {
     setText(headChip, a.status || 'queued');
     const u = a.usage || {};
     const elapsed = a.elapsedS != null ? a.elapsedS : f.elapsedSince(a.startedAt || a.createdAt);
+    // An agent that has not reported usage yet reads 0, not "not available".
     replace(headStats,
       stat('elapsed', f.duration(elapsed)),
-      stat('tokens', f.tokens(u.totalTokens)),
-      stat('cost', f.usd(u.costUsd)));
+      stat('tokens', f.tokens(u.totalTokens || 0)),
+      stat('cost', f.usd(u.costUsd || 0)));
   }
 
   function stat(label, value) {
@@ -239,7 +279,8 @@ export function mountCto({ view, badge }) {
   }
 
   async function refresh() {
-    if (!agentId || inflight) return;
+    if (!agentId) { renderNoCto(); return; }
+    if (inflight) return;
     inflight = true;
     try {
       const [chat, msgs] = await Promise.all([
@@ -251,8 +292,10 @@ export function mountCto({ view, badge }) {
       messages = Array.isArray(msgs) ? msgs : (msgs && Array.isArray(msgs.messages) ? msgs.messages : []);
       render();
     } catch (err) {
+      // A failed poll must not wipe a thread that is already on screen.
       if (!list.childElementCount) {
-        replace(scroll, h('div', { class: 'error-box' }, 'Could not load the CTO session: ' + err.message));
+        replace(scroll, h('div', { class: 'error-box', role: 'alert', style: { margin: '18px' } },
+          'Could not load the CTO session: ' + err.message));
       }
     } finally {
       inflight = false;
@@ -328,10 +371,10 @@ export function mountCto({ view, badge }) {
     if (item.id && queuedIds.has(item.id)) meta.push('queued to CTO inbox');
     if (item.kind === 'pending') meta.push('sending…');
 
-    // The face sits OUTSIDE the bubble, level with its bottom edge, so the
-    // timestamp cannot be a sibling of the bubble in the same column — that
-    // drags the face down past it. `.cto-line` is the face-and-bubble pair and
-    // the timestamp sits under the pair instead.
+    // The face sits OUTSIDE the bubble, level with its bottom edge, and the
+    // timestamp has to live below the pair rather than beside it: a stamp made
+    // a sibling of the bubble in the same column drags the face down past it.
+    // `.cto-line` is the face-and-bubble pair; the stamp sits under the pair.
     const long = String(item.text || '').length > 1400;
     const open = expandedText.has(item.key);
     const bubble = h('div', {
@@ -402,7 +445,8 @@ export function mountCto({ view, badge }) {
 
   async function doSend() {
     const text = textarea.value.trim();
-    if (!text || !agentId) return;
+    if (!agentId) { toast('There is no CTO agent to message yet.', 'error'); return; }
+    if (!text) return;
     textarea.value = '';
     grow();
     textarea.focus();
@@ -446,9 +490,11 @@ export function mountCto({ view, badge }) {
     if (active) refresh();
   });
 
-  const tick = setInterval(() => { if (agentId) renderHead(getAgent(agentId)); }, 1000);
+  const tick = setInterval(() => { if (agentId && !document.hidden) renderHead(getAgent(agentId)); }, 1000);
+  document.addEventListener('visibilitychange', () => { if (!document.hidden && active) refresh(); });
 
   resolveAgent();
+  if (!agentId) renderNoCto();
   renderBadge();
 
   return {
@@ -467,8 +513,10 @@ export function mountCto({ view, badge }) {
       stickBottom = true;
       refresh();
       clearInterval(timer);
-      timer = setInterval(() => { if (active) refresh(); }, POLL_MS);
-      setTimeout(() => textarea.focus(), 0);
+      // A hidden tab polls nothing: the CTO transcript is the most expensive
+      // read in the app and a background window has no reason to ask for it.
+      timer = setInterval(() => { if (active && !document.hidden) refresh(); }, POLL_MS);
+      if (agentId) setTimeout(() => textarea.focus(), 0);
     },
     deactivate() {
       active = false;
@@ -480,9 +528,8 @@ export function mountCto({ view, badge }) {
 }
 
 /* --------------------------------------------------------------- glyphs -- */
-// Three shapes, inlined as paths, because this repo ships no icon library.
-// Sources are the ISC-licensed lucide icon set (Wrench, ArrowUp,
-// MessageSquare).
+// Three shapes (wrench, arrow-up, chat), inlined as paths because this repo
+// ships no icon library.
 
 function svg(children, extra) {
   const el = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
@@ -503,8 +550,8 @@ function svg(children, extra) {
 
 function iconArrowUp() { return svg(['M12 19V5', 'M5 12l7-7 7 7'], '2'); }
 function iconWrench() {
-  // lucide `Wrench`, verbatim. The single-path approximation this replaced
-  // read as a paperclip, which is the wrong idea entirely for a tool call.
+  // A real wrench outline; the previous single-path approximation read as a
+  // paperclip, which is a different promise entirely.
   return svg(['M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z']);
 }
 function iconChat() {

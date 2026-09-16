@@ -1,121 +1,164 @@
 // "New agent" modal — POST /api/agents.
+//
+// The form validates before it posts (so a typo does not cost a round trip)
+// and, when the server refuses anyway, shows the server's own message inline
+// above the fields AND against the field it names. Nothing here fails silently:
+// every path ends in either a created agent or a visible reason.
 
-import { h, clear, toast } from '../lib/dom.js';
+import { h, clear, toast, setText, trapFocus } from '../lib/dom.js';
 import api from '../lib/api.js';
 import { getAgents, getConfig, upsertAgent, select, treeOrder } from '../lib/store.js';
 
 const RUNTIMES = ['claude', 'deepseek', 'external'];
 const ROLES = ['cto', 'orchestrator', 'worker'];
 const EFFORTS = ['', 'low', 'medium', 'high', 'max'];
+const NAME_MAX = 200;
+const TASK_MAX = 2000;
 
 let modalRoot = null;
+let releaseTrap = null;
+let uid = 0;
 
 export function mountNewAgent({ root, button, buttons }) {
   modalRoot = root;
   const triggers = (buttons || [button]).filter(Boolean);
   for (const b of triggers) b.addEventListener('click', openForm);
   modalRoot.addEventListener('click', (ev) => { if (ev.target === modalRoot) closeForm(); });
+  // Capture phase, and preventDefault: the drawer's own Escape handler checks
+  // defaultPrevented, so one Escape closes one thing — this dialog first.
   document.addEventListener('keydown', (ev) => {
-    if (ev.key === 'Escape' && !modalRoot.hidden) { ev.preventDefault(); closeForm(); }
-  });
+    if (ev.key === 'Escape' && !modalRoot.hidden) { ev.preventDefault(); ev.stopPropagation(); closeForm(); }
+  }, true);
 }
 
 function closeForm() {
   if (!modalRoot) return;
   modalRoot.hidden = true;
   clear(modalRoot);
+  if (releaseTrap) { releaseTrap(); releaseTrap = null; }
 }
 
 function openForm() {
   const cfg = getConfig() || {};
   const agents = treeOrder(getAgents()).map((e) => e.agent);
 
-  const parentSel = h('select', { name: 'parentId' },
+  const parentSel = field('Parent', h('select', { name: 'parentId' },
     h('option', { value: '' }, '— none (root / CTO) —'),
-    ...agents.map((a) => h('option', { value: a.id }, `${a.role || '?'} · ${a.name || a.id}`)));
+    ...agents.map((a) => h('option', { value: a.id }, `${a.role || '?'} · ${a.name || a.id}`))),
+    'Leave empty to create a root agent.', true);
 
-  const nameIn = h('input', { type: 'text', name: 'name', placeholder: 'tags orchestrator', required: true });
-  const roleSel = h('select', { name: 'role' }, ...ROLES.map((r) => h('option', { value: r }, r)));
-  roleSel.value = 'worker';
-  const runtimeSel = h('select', { name: 'runtime' }, ...RUNTIMES.map((r) => h('option', { value: r }, r)));
-  runtimeSel.value = 'claude';
-  const modelIn = h('input', { type: 'text', name: 'model', placeholder: cfg.defaultModel || 'server default' });
-  const effortSel = h('select', { name: 'effort' },
-    ...EFFORTS.map((e) => h('option', { value: e }, e || '— default —')));
-  const taskIn = h('input', { type: 'text', name: 'task', placeholder: 'one-line task', required: true });
-  const cwdIn = h('input', { type: 'text', name: 'cwd', placeholder: cfg.defaultCwd || '/path/to/your/project', required: true });
-  const briefIn = h('textarea', { name: 'brief', rows: '5', placeholder: 'Full brief handed to the agent on start (optional).' });
-  const repoIn = h('input', { type: 'text', name: 'repo', placeholder: '/path/to/repo (optional)' });
-  const branchIn = h('input', { type: 'text', name: 'branch', placeholder: 'cr/name (optional)' });
-  const autoStart = h('input', { type: 'checkbox', name: 'autoStart' });
+  const name = field('Name', h('input', { type: 'text', name: 'name', maxlength: String(NAME_MAX), placeholder: 'tags orchestrator', autocomplete: 'off' }), null, false, true);
+  const role = field('Role', h('select', { name: 'role' }, ...ROLES.map((r) => h('option', { value: r }, r))));
+  const runtime = field('Runtime', h('select', { name: 'runtime' }, ...RUNTIMES.map((r) => h('option', { value: r }, r))),
+    'claude and deepseek are spawned as real processes; external only registers a session that is already running.');
+  const model = field('Model', h('input', { type: 'text', name: 'model', placeholder: cfg.defaultModel || 'runtime default', autocomplete: 'off' }));
+  const effort = field('Effort', h('select', { name: 'effort' }, ...EFFORTS.map((e) => h('option', { value: e }, e || '— default —'))));
+  const task = field('Task', h('input', { type: 'text', name: 'task', maxlength: String(TASK_MAX), placeholder: 'one-line task', autocomplete: 'off' }), null, true, true);
+  const cwd = field('Working directory', h('input', { type: 'text', name: 'cwd', placeholder: cfg.defaultCwd || 'absolute path to the folder the agent runs in', autocomplete: 'off' }),
+    'Ignored when a repo is given below: the agent then runs in a fresh worktree of it.', true, true);
+  const brief = field('Brief', h('textarea', { name: 'brief', rows: '5', placeholder: 'Full brief handed to the agent on start (optional).' }), null, true);
+  const repo = field('Repo', h('input', { type: 'text', name: 'repo', placeholder: 'path to a git repo (optional)', autocomplete: 'off' }));
+  const branch = field('Branch', h('input', { type: 'text', name: 'branch', placeholder: 'cr/<name>-<stamp> (optional)', autocomplete: 'off' }));
+
+  role.input.value = 'worker';
+  runtime.input.value = 'claude';
+
+  const autoStart = h('input', { type: 'checkbox', name: 'autoStart', id: 'na-autostart-' + (++uid) });
   autoStart.checked = true;
 
-  const errEl = h('div', { class: 'error-box', hidden: true, style: { margin: '0 0 12px' } });
-  const submitBtn = h('button', { class: 'btn btn-primary' }, 'Create agent');
+  const errEl = h('div', { class: 'error-box', role: 'alert', hidden: true, style: { margin: '0 0 14px' } });
+  const submitBtn = h('button', { class: 'btn btn-primary', type: 'submit' }, 'Create agent');
   const cancelBtn = h('button', { class: 'btn btn-ghost', type: 'button', onclick: closeForm }, 'Cancel');
 
-  const form = h('form', { class: 'modal-body', novalidate: true },
+  const fields = [parentSel, name, role, runtime, model, effort, task, cwd, brief];
+
+  const form = h('form', { class: 'modal-body', novalidate: true, id: 'new-agent-form' },
     errEl,
     h('div', { class: 'form-grid' },
-      field('Parent', parentSel, 'Leave empty to create a root agent.', true),
-      field('Name', nameIn),
-      field('Role', roleSel),
-      field('Runtime', runtimeSel, 'external agents are registered but not spawned.'),
-      field('Model', modelIn),
-      field('Effort', effortSel),
-      field('Task', taskIn, null, true),
-      field('Working directory', cwdIn, null, true),
-      field('Brief', briefIn, null, true),
+      ...fields.map((f) => f.el),
       h('fieldset', { class: 'fieldset-sub' },
         h('legend', null, 'Worktree (optional)'),
-        field('Repo', repoIn),
-        field('Branch', branchIn)),
+        repo.el, branch.el),
       h('div', { class: 'field field-full' },
-        h('label', { class: 'check-label' }, autoStart, 'Start immediately (autoStart)'))));
+        h('label', { class: 'check-label', for: autoStart.id }, autoStart, 'Start immediately (autoStart)'))));
 
   form.addEventListener('submit', (ev) => { ev.preventDefault(); submit(); });
+  // Re-validating as the operator types is the difference between "the form is
+  // broken" and "this field is wrong".
+  for (const f of [name, task, cwd]) f.input.addEventListener('input', () => f.setError(null));
 
-  const modal = h('div', { class: 'modal', role: 'dialog', 'aria-modal': 'true', 'aria-label': 'Create a new agent' },
+  const modal = h('div', { class: 'modal', role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': 'new-agent-title' },
     h('div', { class: 'modal-head' },
-      h('h2', { class: 'modal-title' }, 'New agent'),
-      h('button', { class: 'btn btn-sm btn-ghost', type: 'button', onclick: closeForm }, 'Esc')),
+      h('h2', { class: 'modal-title', id: 'new-agent-title' }, 'New agent'),
+      h('button', { class: 'btn btn-sm btn-ghost', type: 'button', 'aria-label': 'Close this dialog (Escape)', onclick: closeForm }, 'Esc')),
     form,
     h('div', { class: 'modal-foot' }, cancelBtn, submitBtn));
 
-  submitBtn.addEventListener('click', () => submit());
+  // The submit button lives in the footer, outside the <form> element, so it is
+  // wired to the form explicitly rather than relying on implicit submission.
+  submitBtn.setAttribute('form', 'new-agent-form');
 
   clear(modalRoot);
   modalRoot.appendChild(modal);
   modalRoot.hidden = false;
-  nameIn.focus();
+  releaseTrap = trapFocus(modal, name.input);
+
+  function validate() {
+    let first = null;
+    const check = (f, message) => {
+      f.setError(message);
+      if (message && !first) first = f;
+    };
+    check(name, !name.input.value.trim() ? 'A name is required — it is how you will find this agent in the tree.' : null);
+    check(task, !task.input.value.trim() ? 'A one-line task is required.' : null);
+    const needsCwd = !repo.input.value.trim();
+    check(cwd, needsCwd && !cwd.input.value.trim()
+      ? 'Give a working directory, or a repo below to create a worktree from.'
+      : null);
+    if (first) {
+      errEl.hidden = false;
+      setText(errEl, 'Fix the highlighted field' + (first === name ? '' : 's') + ' and try again.');
+      first.input.focus();
+      return false;
+    }
+    errEl.hidden = true;
+    return true;
+  }
+
+  /** Point the server's message at the field it is about, when it names one. */
+  function blame(message) {
+    const m = String(message || '').toLowerCase();
+    if (m.includes('name')) return name;
+    if (m.includes('task')) return task;
+    if (m.includes('repo') || m.includes('worktree') || m.includes('git')) return repo;
+    if (m.includes('cwd') || m.includes('working directory') || m.includes('folder')) return cwd;
+    if (m.includes('parent')) return parentSel;
+    if (m.includes('runtime') || m.includes('harness')) return runtime;
+    if (m.includes('role')) return role;
+    return null;
+  }
 
   async function submit() {
-    const name = nameIn.value.trim();
-    const task = taskIn.value.trim();
-    const cwd = cwdIn.value.trim();
-    if (!name || !task || !cwd) {
-      errEl.hidden = false;
-      errEl.textContent = 'name, task and cwd are required.';
-      return;
-    }
+    if (!validate()) return;
     const payload = {
-      name,
-      role: roleSel.value,
-      runtime: runtimeSel.value,
-      task,
-      cwd,
+      name: name.input.value.trim(),
+      role: role.input.value,
+      runtime: runtime.input.value,
+      task: task.input.value.trim(),
       autoStart: autoStart.checked,
     };
-    if (parentSel.value) payload.parentId = parentSel.value;
-    if (modelIn.value.trim()) payload.model = modelIn.value.trim();
-    if (effortSel.value) payload.effort = effortSel.value;
-    if (briefIn.value.trim()) payload.brief = briefIn.value.trim();
-    if (repoIn.value.trim()) {
-      payload.worktree = { repo: repoIn.value.trim() };
-      if (branchIn.value.trim()) payload.worktree.branch = branchIn.value.trim();
+    if (cwd.input.value.trim()) payload.cwd = cwd.input.value.trim();
+    if (parentSel.input.value) payload.parentId = parentSel.input.value;
+    if (model.input.value.trim()) payload.model = model.input.value.trim();
+    if (effort.input.value) payload.effort = effort.input.value;
+    if (brief.input.value.trim()) payload.brief = brief.input.value.trim();
+    if (repo.input.value.trim()) {
+      payload.worktree = { repo: repo.input.value.trim() };
+      if (branch.input.value.trim()) payload.worktree.branch = branch.input.value.trim();
     }
 
     submitBtn.disabled = true;
+    cancelBtn.disabled = true;
     submitBtn.textContent = 'Creating…';
     errEl.hidden = true;
     try {
@@ -130,18 +173,52 @@ function openForm() {
         toast('Agent created.', 'ok');
       }
     } catch (err) {
+      // The server's own words, verbatim, where the operator is looking.
+      const message = err && err.message ? err.message : String(err);
       errEl.hidden = false;
-      errEl.textContent = 'Create failed: ' + err.message;
+      setText(errEl, err && err.status ? `The server refused this (${err.status}): ${message}` : message);
+      const f = blame(message);
+      if (f) { f.setError(message); f.input.focus(); }
+      else errEl.scrollIntoView({ block: 'nearest' });
     } finally {
       submitBtn.disabled = false;
+      cancelBtn.disabled = false;
       submitBtn.textContent = 'Create agent';
     }
   }
 }
 
-function field(label, input, hint, full) {
-  return h('div', { class: 'field' + (full ? ' field-full' : '') },
-    h('label', null, label),
-    input,
-    hint ? h('span', { class: 'hint' }, hint) : null);
+/**
+ * A labelled field. The label is bound to its control with for/id (clicking the
+ * label focuses the input, and a screen reader announces it), and each field
+ * owns its own error line, wired through aria-describedby.
+ */
+function field(label, input, hint, full, required) {
+  const id = 'na-' + (++uid);
+  input.id = id;
+  if (required) input.setAttribute('aria-required', 'true');
+  const hintEl = hint ? h('span', { class: 'hint', id: id + '-hint' }, hint) : null;
+  const errEl = h('span', { class: 'field-error', id: id + '-err', hidden: true });
+  const describedBy = [hintEl ? id + '-hint' : null].filter(Boolean);
+  if (describedBy.length) input.setAttribute('aria-describedby', describedBy.join(' '));
+  const el = h('div', { class: 'field' + (full ? ' field-full' : '') },
+    h('label', { for: id }, label, required ? h('span', { class: 'req', title: 'required' }, ' *') : null),
+    input, hintEl, errEl);
+  return {
+    el, input,
+    setError(message) {
+      errEl.hidden = !message;
+      setText(errEl, message || '');
+      if (message) {
+        input.setAttribute('aria-invalid', 'true');
+        input.setAttribute('aria-describedby', [id + '-err'].concat(describedBy).join(' '));
+        el.dataset.invalid = '1';
+      } else {
+        input.removeAttribute('aria-invalid');
+        if (describedBy.length) input.setAttribute('aria-describedby', describedBy.join(' '));
+        else input.removeAttribute('aria-describedby');
+        delete el.dataset.invalid;
+      }
+    },
+  };
 }

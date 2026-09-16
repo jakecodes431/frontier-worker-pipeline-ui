@@ -5,9 +5,15 @@
 // (finished, running and blocked workers all present), a ticking PTY, and
 // drifting usage numbers.
 //
+// `?mock=1&empty=1` serves the same contract with NO agents, which is how the
+// first-run empty states are checked without touching a database.
+//
+// Every path in this file is invented; nothing here points at a real machine.
 // This file is only imported when ?mock=1 is present (see app.js).
 
 console.info('[mock] Control Room mock server active — no real backend is being contacted.');
+
+const EMPTY = new URLSearchParams(location.search).has('empty');
 
 const now = () => new Date().toISOString();
 const iso = (msAgo) => new Date(Date.now() - msAgo).toISOString();
@@ -38,7 +44,7 @@ function seed() {
     status: 'running',
     task: 'Own the notes-app roadmap and delegate the tags feature to an orchestrator.',
     note: '',
-    cwd: '/home/dev/projects/notes-app',
+    cwd: '~/projects/notes-app',
     worktree: null,
     controlledBy: 'parent',
     sessionId: '00000000-0000-4000-8000-000000000001',
@@ -58,11 +64,11 @@ function seed() {
     status: 'running',
     task: 'Ship tag support in notes-app: create, assign, and filter by tag.',
     note: '',
-    cwd: '/home/dev/projects/notes-app/.worktrees/tags-0915',
+    cwd: '~/projects/notes-app/.worktrees/tags-0915',
     worktree: {
-      repo: '/home/dev/projects/notes-app',
+      repo: '~/projects/notes-app',
       branch: 'cr/tags-0915',
-      path: '/home/dev/projects/notes-app/.worktrees/tags-0915',
+      path: '~/projects/notes-app/.worktrees/tags-0915',
     },
     controlledBy: 'parent',
     sessionId: '00000000-0000-4000-8000-000000000002',
@@ -81,11 +87,11 @@ function seed() {
     effort: 'low',
     note: '',
     controlledBy: 'parent',
-    cwd: `/home/dev/projects/notes-app/.worktrees/${o.slug}-0915`,
+    cwd: `~/projects/notes-app/.worktrees/${o.slug}-0915`,
     worktree: {
-      repo: '/home/dev/projects/notes-app',
+      repo: '~/projects/notes-app',
       branch: `cr/${o.slug}-0915`,
-      path: `/home/dev/projects/notes-app/.worktrees/${o.slug}-0915`,
+      path: `~/projects/notes-app/.worktrees/${o.slug}-0915`,
     },
     ...o,
   });
@@ -149,7 +155,9 @@ function seed() {
   });
 
   const workers = [storage, apiWorker, uiWorker, docsWorker];
-  for (const a of [cto, orch, ...workers]) agents.set(a.id, a);
+  // In ?empty=1 the cast is built but never registered, so every view renders
+  // its first-run state against the same contract.
+  for (const a of [cto, orch, ...workers]) { a.cwdExists = true; if (!EMPTY) agents.set(a.id, a); }
   return { cto, orch, storage, apiWorker, uiWorker, docsWorker, workers };
 }
 
@@ -326,11 +334,16 @@ const FILE_CONTENT = {
   'server/routes/notes.js': `const { Router } = require('express');\nconst { listNotes } = require('../db/notes');\n\nrouter.get('/notes', asyncHandler(async (req, res) => {\n  const notes = listNotes(req.user.id, { tag: req.query.tag });\n  res.json({ notes });\n}));\n`,
 };
 
-/** Sum the DeepSeek workers into the one tier the dashboard reports. */
+/**
+ * Sum the DeepSeek workers into the one tier the dashboard reports. In
+ * ?empty=1 no worker is registered, so this correctly sums nothing.
+ */
 function deepseekTier() {
   const t = usage(0, 0, 0, 0, 0, 0);
   for (const w of workers) {
-    const u = agents.get(w.id).usage;
+    const live = agents.get(w.id);
+    if (!live) continue;
+    const u = live.usage;
     t.inputTokens += u.inputTokens;
     t.cacheReadTokens += u.cacheReadTokens;
     t.cacheWriteTokens += u.cacheWriteTokens;
@@ -342,27 +355,53 @@ function deepseekTier() {
   return t;
 }
 
+const todayDate = new Date();
+/** Local calendar day, the same key the server banks spend under. */
+const dayKey = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+
 let usageSummary = {
-  spend: { today: 9.5354, week: 41.2087, month: 128.4413 },
-  currentRun: { costUsd: 0.4318, startedAt: iso(46 * 60000) },
-  byTier: {
-    cto: cto.usage,
-    orchestrator: orch.usage,
-    deepseek: deepseekTier(),
+  spend: EMPTY ? { today: 0, week: 0, month: 0 } : { today: 9.5354, week: 41.2087, month: 128.4413 },
+  spendWindows: {
+    today: dayKey(todayDate),
+    weekFrom: dayKey(new Date(Date.now() - 6 * 864e5)),
+    monthFrom: dayKey(todayDate).slice(0, 8) + '01',
+    basis: 'local calendar days',
   },
-  counts: { active: 3, done: 2, blocked: 1, failed: 0 },
-  tokens: { input: 871_500, cacheRead: 6_241_000, cacheWrite: 296_000, output: 144_200, total: 7_552_700 },
+  currentRun: {
+    costUsd: EMPTY ? 0 : 0.4318,
+    startedAt: EMPTY ? null : iso(46 * 60000),
+    basis: 'every agent that has not reached a terminal status',
+  },
+  byTier: {
+    cto: EMPTY ? usage(0, 0, 0, 0, 0, 0) : cto.usage,
+    orchestrator: EMPTY ? usage(0, 0, 0, 0, 0, 0) : orch.usage,
+    deepseek: deepseekTier(),
+    other: usage(0, 0, 0, 0, 0, 0),
+  },
+  byTierAgents: EMPTY ? { cto: 0, orchestrator: 0, deepseek: 0, other: 0 } : { cto: 1, orchestrator: 1, deepseek: 4, other: 0 },
+  counts: EMPTY
+    ? { total: 0, active: 0, running: 0, queued: 0, idle: 0, paused: 0, stopping: 0, blocked: 0, done: 0, failed: 0, stopped: 0, unknown: 0 }
+    : { total: 6, active: 3, running: 3, queued: 0, idle: 0, paused: 0, stopping: 0, blocked: 1, done: 2, failed: 0, stopped: 0, unknown: 0 },
+  tokens: EMPTY
+    ? { input: 0, cacheRead: 0, cacheWrite: 0, output: 0, total: 0 }
+    : { input: 871_500, cacheRead: 6_241_000, cacheWrite: 296_000, output: 144_200, total: 7_552_700 },
   limits: {
-    claude: { note: 'weekly limit resets Sun 00:00 UTC', used: '38%', resetsAt: iso(-3 * 3600 * 1000) },
+    claude: EMPTY ? null : { note: 'weekly limit resets Sun 00:00 UTC', used: '38%', resetsAt: iso(-3 * 3600 * 1000) },
     deepseek: null,
   },
-  savings: { deepseekActualUsd: 0.0475, fableEquivalentUsd: 3.8008, savedUsd: 3.7533, estimated: true },
+  savings: {
+    deepseekActualUsd: EMPTY ? 0 : 0.0475,
+    fableEquivalentUsd: EMPTY ? 0 : 3.8008,
+    savedUsd: EMPTY ? 0 : 3.7533,
+    estimated: true,
+    basis: 'DeepSeek token usage re-priced at the frontier price sheet (mock numbers).',
+  },
   pricing: { source: 'config/pricing.json', estimated: true },
 };
 
 const config = {
   defaultModel: 'claude-fable-5-1',
-  defaultCwd: '/home/dev/projects',
+  defaultCwd: '~/projects',
   port: 4800,
   mock: true,
 };
@@ -508,8 +547,10 @@ setInterval(() => {
     if (a.runtime === 'deepseek') a.usage.fableEquivalentUsd = Number((a.usage.costUsd * 80).toFixed(6));
     a.elapsedS = Math.floor((Date.now() - new Date(a.startedAt).getTime()) / 1000);
   }
-  usageSummary.byTier.cto = agents.get(cto.id).usage;
-  usageSummary.byTier.orchestrator = agents.get(orch.id).usage;
+  // In ?empty=1 the seeded agents were never registered; the drift loop still
+  // runs (the frames must keep flowing) but has nothing to add up.
+  if (agents.has(cto.id)) usageSummary.byTier.cto = agents.get(cto.id).usage;
+  if (agents.has(orch.id)) usageSummary.byTier.orchestrator = agents.get(orch.id).usage;
   usageSummary.byTier.deepseek = deepseekTier();
 
   const tk = { input: 0, cacheRead: 0, cacheWrite: 0, output: 0, total: 0 };
@@ -528,7 +569,7 @@ setInterval(() => {
     week: Number((today + 31.67).toFixed(4)),
     month: Number((today + 118.9).toFixed(4)),
   };
-  usageSummary.currentRun.costUsd = Number((usageSummary.currentRun.costUsd + 0.004).toFixed(6));
+  usageSummary.currentRun.costUsd = Number((usageSummary.currentRun.costUsd + (agents.size ? 0.004 : 0)).toFixed(6));
   const ds = usageSummary.byTier.deepseek;
   usageSummary.savings = {
     deepseekActualUsd: ds.costUsd,
@@ -537,18 +578,28 @@ setInterval(() => {
     estimated: true,
   };
   usageSummary.counts = countStatuses();
+  usageSummary.byTierAgents = countTiers();
   broadcast({ type: 'usage', usage: usageSummary });
 }, 3000);
 
+/** Same shape the real server sends: one bucket per status, plus `active`. */
 function countStatuses() {
-  let active = 0, done = 0, blocked = 0, failed = 0;
+  const c = { total: agents.size, active: 0, running: 0, queued: 0, idle: 0, paused: 0, stopping: 0, blocked: 0, done: 0, failed: 0, stopped: 0, unknown: 0 };
   for (const a of agents.values()) {
-    if (a.status === 'running' || a.status === 'queued') active += 1;
-    else if (a.status === 'done') done += 1;
-    else if (a.status === 'blocked') blocked += 1;
-    else if (a.status === 'failed') failed += 1;
+    if (c[a.status] === undefined) c.unknown += 1; else c[a.status] += 1;
+    if (a.status === 'running') c.active += 1;
   }
-  return { active, done, blocked, failed };
+  return c;
+}
+
+/** Agents per tier — a role nobody planned for lands in `other`, not nowhere. */
+function countTiers() {
+  const t = { cto: 0, orchestrator: 0, deepseek: 0, other: 0 };
+  for (const a of agents.values()) {
+    const key = a.runtime === 'deepseek' ? 'deepseek' : a.role === 'cto' ? 'cto' : a.role === 'orchestrator' ? 'orchestrator' : 'other';
+    t[key] += 1;
+  }
+  return t;
 }
 
 // Occasional full state frame, as a real server would emit on change.
@@ -557,6 +608,7 @@ setInterval(() => broadcast(stateFrame()), 15000);
 // Occasional assistant message so the Chat tab visibly refreshes.
 setInterval(() => {
   const list = chats.get(orch.id);
+  if (!list || !agents.has(orch.id)) return;
   list.push({
     role: 'assistant',
     text: `Progress ping ${new Date().toLocaleTimeString('en-GB', { hour12: false })}: still waiting on the tags-api worker's validation decision.`,
@@ -601,7 +653,11 @@ window.fetch = async function mockFetch(input, init = {}) {
   if (pathname === '/api/usage') return json(usageSummary);
 
   if (pathname === '/api/agents' && method === 'POST') {
-    if (!body || !body.name || !body.task || !body.cwd) return json({ error: 'name, task and cwd are required' }, 400);
+    // Same validation order and 400s as the real server, so the form's error
+    // handling can be exercised offline.
+    if (!body || !String(body.name || '').trim()) return json({ error: 'name is required' }, 400);
+    if (!String(body.task || '').trim()) return json({ error: 'task is required' }, 400);
+    if (!String(body.cwd || '').trim() && !(body.worktree && body.worktree.repo)) return json({ error: 'cwd or worktree.repo is required' }, 400);
     const id = `a-${new Date().toISOString().replace(/[-:T.]/g, '').slice(0, 15)}-${Math.random().toString(16).slice(2, 6)}`;
     const agent = {
       id,
@@ -625,6 +681,7 @@ window.fetch = async function mockFetch(input, init = {}) {
       startedAt: body.runtime === 'external' ? null : now(),
       endedAt: null,
       elapsedS: 0,
+      cwdExists: true,
       usage: usage(0, 0, 0, 0, 0, 0),
     };
     agents.set(id, agent);
@@ -633,7 +690,7 @@ window.fetch = async function mockFetch(input, init = {}) {
     inboxes.set(id, []);
     messages.set(id, []);
     broadcast(stateFrame());
-    return json(agent);
+    return json(agent, 201);
   }
 
   const parts = pathname.split('/').filter(Boolean); // ['api','agents',id, sub?]
@@ -728,6 +785,9 @@ window.fetch = async function mockFetch(input, init = {}) {
 
     case 'inbox':
       return json(inboxes.get(id) || []);
+
+    case 'messages':
+      return json(messages.get(id) || []);
 
     case 'chat':
       return json({ messages: chats.get(id) || [] });

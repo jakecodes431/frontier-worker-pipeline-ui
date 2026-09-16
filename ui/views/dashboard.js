@@ -6,24 +6,27 @@
 // Rebuilt wholesale on each `usage` / `agents` event; it holds no live widgets
 // (the terminal and the open drawer live elsewhere, untouched by this).
 //
-// LABELLING IS LOAD-BEARING. Claude dollars are API-equivalent estimates
-// priced from token counts — those sessions run on a subscription plan and are
-// never billed per token. Only DeepSeek figures are real, metered API spend.
-// Every money panel therefore carries its basis.
+// LABELLING IS LOAD-BEARING. Claude/Fable dollars are API-equivalent estimates
+// computed from token counts — those sessions run on a Claude plan and are
+// never invoiced per token. Only DeepSeek figures are real money. Every money
+// panel therefore carries its basis.
 
-import { h, replace } from '../lib/dom.js';
+import { h, replace, qs } from '../lib/dom.js';
 import * as f from '../lib/format.js';
-import { store, getUsage, getAgents } from '../lib/store.js';
+import { store, getUsage, getAgents, getConfig, isLoaded, getLoadError } from '../lib/store.js';
 
 const PLAN_BASIS = 'API-equivalent · on plan (estimate)';
 const ACTUAL_BASIS = 'actual API cost';
 
 let root = null;
+let frame = 0;
+let lastSig = '';
 
 export function mountDashboard(el) {
   root = el;
-  store.on('usage', render);
-  store.on('agents', render);
+  store.on('usage', schedule);
+  store.on('agents', schedule);
+  store.on('config', schedule);
   render();
   setInterval(() => {
     const node = root && root.querySelector('[data-run-elapsed]');
@@ -32,6 +35,43 @@ export function mountDashboard(el) {
       node.textContent = s === null ? '—' : f.duration(s);
     }
   }, 1000);
+}
+
+/**
+ * This view is rebuilt wholesale, and a single 5s server frame emits BOTH
+ * `agents` and `usage`. Without coalescing, a fleet of twenty agents rebuilt
+ * the entire panel grid twice every five seconds, throwing away scroll
+ * anchoring and any text selection with it. One rebuild per animation frame,
+ * and only when the numbers actually moved.
+ */
+function schedule() {
+  if (frame) return;
+  // requestAnimationFrame never fires in a background tab, which would leave a
+  // page opened in one stuck on "waiting for the first frame"; the timer is the
+  // fallback, and whichever lands first wins.
+  const run = () => {
+    if (!frame) return;
+    cancelAnimationFrame(frame.raf);
+    clearTimeout(frame.timer);
+    frame = 0;
+    render();
+  };
+  frame = { raf: requestAnimationFrame(run), timer: setTimeout(run, 250) };
+}
+
+/** Everything the rendered page depends on, cheaply. */
+function signature(u, agents) {
+  if (!u) return 'none:' + agents.length;
+  const t = u.tokens || {};
+  const c = u.counts || {};
+  const s = u.spend || {};
+  const tiers = Object.entries(u.byTier || {}).map(([k, v]) => k + (v && v.costUsd) + ':' + (v && v.totalTokens)).join(',');
+  return [
+    agents.length, t.total, t.input, t.output, s.today, s.week, s.month,
+    c.running, c.blocked, c.done, c.failed, c.stopped, c.idle, c.queued, c.paused, c.total,
+    u.currentRun && u.currentRun.startedAt, (u.savings && u.savings.savedUsd), tiers,
+    JSON.stringify(u.limits || {}),
+  ].join('|');
 }
 
 /* ------------------------------------------------------------------ atoms */
@@ -134,8 +174,18 @@ function render() {
   const u = getUsage();
   const agents = getAgents();
 
+  const sig = signature(u, agents);
+  if (sig === lastSig && root.firstChild) return;
+  lastSig = sig;
+
   if (!u) {
-    replace(root, h('div', { class: 'page' }, h('div', { class: 'loading' }, 'Waiting for the first state frame from the server…')));
+    const err = getLoadError();
+    replace(root, h('div', { class: 'page' }, err ? serverDown(err) : h('div', { class: 'loading' }, 'Waiting for the first state frame from the server…')));
+    return;
+  }
+
+  if (!agents.length && isLoaded()) {
+    replace(root, h('div', { class: 'page' }, firstRun()));
     return;
   }
 
@@ -152,11 +202,77 @@ function render() {
         'Claude dollars are API-equivalent estimates priced from token counts — those sessions run on the Claude plan and are never billed per token. DeepSeek dollars are real, metered API spend.')),
     h('div', { class: 'plates' },
       spendPlate(u),
-      tierPlate(u.byTier || {}),
+      tierPlate(u.byTier || {}, u.byTierAgents || {}),
       fleetPlate({ agents, counts, running, active }),
       tokenPlate(u.tokens || {}),
       limitPlate(u.limits || {}),
       savingsPlate(u.savings || null))));
+}
+
+/* ------------------------------------------------------------ empty states */
+
+function openNewAgent() {
+  const btn = qs('#new-agent-btn') || qs('#new-agent-btn-mobile');
+  if (btn) btn.click();
+}
+
+function step(n, title, body, action) {
+  return h('li', { class: 'step' },
+    h('span', { class: 'step-n', 'aria-hidden': 'true' }, String(n)),
+    h('div', { class: 'step-body' },
+      h('h3', { class: 'step-title' }, title),
+      h('p', { class: 'step-text' }, body),
+      action || null));
+}
+
+/** What a brand-new install sees instead of a grid of zeroes. */
+function firstRun() {
+  const u = getUsage() || {};
+  const spend = Number(u.spend && u.spend.month) || 0;
+  const cfg = getConfig() || {};
+  const bin = cfg.crBin || 'bin/cr.js';
+  return h('div', null,
+    h('div', { class: 'page-head' },
+      h('span', { class: 'label' }, 'Control room · first run'),
+      h('h1', { class: 'page-title' }, 'Nothing is being tracked yet'),
+      h('div', { class: 'page-sub' },
+        'The control room is running and the database is empty. It shows spend and progress for agents it knows about, ',
+        'so the first step is to give it one — either the session you are already in, or a new process it starts for you.')),
+    h('section', { class: 'plate' },
+      h('div', { class: 'plate-head' },
+        h('h2', { class: 'plate-title' }, 'Start here'),
+        h('span', { class: 'plate-note' }, 'two ways in; both take under a minute')),
+      h('ol', { class: 'steps' },
+        step(1, 'Register the session you are already in',
+          'An "external" agent is a CLI session the control room did not start — the one you are reading this from, for example. It is tracked by its session id: usage, transcript and reports all appear here, and it can spawn children.',
+          h('div', { class: 'btn-row' },
+            h('button', { class: 'btn btn-primary', type: 'button', onclick: openNewAgent }, 'New agent → runtime "external"'))),
+        step(2, 'Or let the control room spawn one',
+          'Pick a role and a working directory and it launches a real CLI in a real terminal — Claude Code for a CTO or orchestrator, the DeepSeek harness for a worker. Point it at a git repo and the worker gets its own worktree and branch.',
+          h('pre', { class: 'code-inline mono' },
+            `node ${bin} spawn --name "docs pass" --role worker \\\n  --runtime deepseek --repo <path-to-repo> --task "one line"`)),
+        step(3, 'Then watch it here',
+          'Dashboard is money and fleet health; Hierarchy is the tree with a terminal attached to every live process; CTO is the conversation with your top-level agent.',
+          null)),
+      spend > 0
+        ? h('div', { class: 'plate-foot' },
+            `Recorded spend this month: ${f.usd(spend)} — from agents that have since been removed from the tree.`)
+        : null));
+}
+
+/** The server is not answering: say which one, and what to do about it. */
+function serverDown(message) {
+  return h('div', null,
+    h('div', { class: 'page-head' },
+      h('span', { class: 'label' }, 'Control room · offline'),
+      h('h1', { class: 'page-title' }, 'The control server is not answering')),
+    h('section', { class: 'plate' },
+      h('div', { class: 'plate-head' }, h('h2', { class: 'plate-title' }, 'What happened')),
+      h('div', { class: 'plate-pad' },
+        h('div', { class: 'error-box', role: 'alert' }, String(message)),
+        h('p', { class: 'step-text', style: { marginTop: '12px' } },
+          'This page is served by the control room itself, so it is usually a server that stopped after the page was loaded. ',
+          'Start it again with ', h('code', { class: 'mono' }, 'npm start'), ' and the banner at the top will clear on its own.'))));
 }
 
 /* ------------------------------------------------------------------ spend */
@@ -164,6 +280,7 @@ function render() {
 function spendPlate(u) {
   const spend = u.spend || {};
   const run = u.currentRun || {};
+  const windows = u.spendWindows || {};
   const today = Number(spend.today) || 0;
   const week = Number(spend.week) || 0;
   const month = Number(spend.month) || 0;
@@ -173,16 +290,16 @@ function spendPlate(u) {
     return p === null ? 'no spend recorded this month' : `${p.toFixed(0)}% of the month to date`;
   };
 
-  return plate('Spend', 'rolling windows · all tiers combined', [
+  return plate('Spend', 'banked on the day it was measured · local calendar days · all tiers combined', [
     panel('w-6', 'Spend today', money(today), {
       sub: sharePct(today),
       viz: meter(month > 0 ? today / month : 0, 'quiet'),
-      basis: basisLine('estimate'),
+      basis: `${basisLine('estimate')} · since midnight${windows.today ? ` (${windows.today})` : ''}`,
     }),
     panel('w-6', 'Spend this week', money(week), {
       sub: sharePct(week),
       viz: meter(month > 0 ? week / month : 0, 'quiet'),
-      basis: basisLine('estimate'),
+      basis: `${basisLine('estimate')} · rolling 7 days${windows.weekFrom ? ` from ${windows.weekFrom}` : ''}`,
     }),
     panel('w-6', 'Spend this month', money(month), {
       sub: 'the three windows against each other',
@@ -199,7 +316,7 @@ function spendPlate(u) {
         ? h('span', null, 'running for ', h('span', { class: 'mono', dataset: { runElapsed: run.startedAt } },
             runElapsed === null ? '—' : f.duration(runElapsed)))
         : 'no run in progress',
-      basis: basisLine('estimate'),
+      basis: `${basisLine('estimate')} · every agent not yet finished, whole-session cost`,
     }),
   ]);
 }
@@ -207,26 +324,37 @@ function spendPlate(u) {
 /* ------------------------------------------------------------------ tiers */
 
 const TIERS = [
-  ['cto', 'Claude CTO', 'estimate'],
-  ['orchestrator', 'Claude orchestrators', 'estimate'],
-  ['deepseek', 'DeepSeek workers', 'actual'],
+  ['cto', 'Claude CTO', 'estimate', 'no agent holds the cto role'],
+  ['orchestrator', 'Claude orchestrators', 'estimate', 'no agent holds the orchestrator role'],
+  ['deepseek', 'DeepSeek workers', 'actual', 'nothing has run on the deepseek runtime'],
+  // Nothing is allowed to fall out of this list: an agent that is neither a
+  // DeepSeek process nor a CTO/orchestrator (a Claude-run worker, an external
+  // session with an unusual role) lands here rather than vanishing from the
+  // per-tier totals while still counting in the fleet total.
+  ['other', 'Other agents', 'estimate', 'every agent fits one of the tiers above'],
 ];
 
-function tierPlate(tiers) {
-  const keys = TIERS.map((t) => t[0]);
-  const extra = Object.keys(tiers).filter((k) => !keys.includes(k) && tiers[k] && tiers[k].totalTokens);
-  const all = TIERS.concat(extra.map((k) => [k, k, 'estimate']));
+function tierPlate(tiers, tierAgents) {
+  // A server that does not report per-tier agent counts (an older build) simply
+  // gets panels without the count line, rather than a confident "0 agents".
+  const counts = tierAgents && Object.keys(tierAgents).length ? tierAgents : null;
+  const known = TIERS.map((t) => t[0]);
+  const extra = Object.keys(tiers).filter((k) => !known.includes(k));
+  const all = TIERS.concat(extra.map((k) => [k, k, 'estimate', 'reported by the server']));
   const totalCost = all.reduce((a, [k]) => a + (Number(tiers[k] && tiers[k].costUsd) || 0), 0);
 
-  return plate('Usage by tier', 'what each model tier has cost and consumed',
-    all.map(([key, label, kind]) => {
+  return plate('Usage by tier', 'every agent counts in exactly one tier; the four add up to the fleet total',
+    all.map(([key, label, kind, what]) => {
       const t = tiers[key];
+      const n = counts ? Number(counts[key]) || 0 : null;
       const badge = h('span', { class: 'badge ' + (kind === 'actual' ? 'badge-actual' : 'badge-est') },
         kind === 'actual' ? 'actual' : 'estimated');
+      // "Other" is only worth a panel when something is actually in it.
+      if (key === 'other' && !n && !(t && t.totalTokens)) return null;
       if (!t || !t.totalTokens) {
-        return panel('w-8', label, [null, 'no usage yet', null], {
+        return panel('w-8', label, [null, n ? 'no usage yet' : 'none', null], {
           na: true, badge,
-          sub: kind === 'actual' ? 'no DeepSeek work has run' : 'nothing has run at this tier',
+          sub: n ? `${f.count(n)} agent${n === 1 ? '' : 's'} · no tokens reported yet` : what,
           basis: basisLine(kind),
         });
       }
@@ -234,7 +362,7 @@ function tierPlate(tiers) {
       const share = pct(cost, totalCost);
       return panel('w-8', label, money(cost), {
         badge,
-        sub: `${f.tokens(t.totalTokens)} tokens${share === null ? '' : ` · ${share.toFixed(1)}% of all reported cost`}`,
+        sub: [n === null ? null : `${f.count(n)} agent${n === 1 ? '' : 's'}`, `${f.tokens(t.totalTokens)} tokens`, share === null ? null : `${share.toFixed(1)}% of all reported cost`].filter(Boolean).join(' · '),
         viz: bars([
           { label: 'input', value: t.inputTokens, display: f.tokens(t.inputTokens) },
           { label: 'cache', value: (Number(t.cacheReadTokens) || 0) + (Number(t.cacheWriteTokens) || 0), display: f.tokens((Number(t.cacheReadTokens) || 0) + (Number(t.cacheWriteTokens) || 0)) },
@@ -253,12 +381,15 @@ function fleetPlate({ agents, counts, running, active }) {
   const failed = (counts.failed ?? 0) + (counts.stopped ?? 0);
   const idle = counts.idle ?? agents.filter((a) => a.status === 'idle').length;
   const queued = counts.queued ?? Math.max(0, active - running);
+  const paused = (counts.paused ?? 0) + (counts.stopping ?? 0) + (counts.unknown ?? 0);
   const total = Math.max(1, agents.length);
+  const waiting = [`${queued} queued`, `${idle} idle`];
+  if (paused) waiting.push(`${paused} paused or stopping`);
 
   return plate('Fleet', `${agents.length} node${agents.length === 1 ? '' : 's'} in the tree`, [
     panel('w-6', 'Running now', [null, f.count(running), running === 1 ? 'agent' : 'agents'], {
       live: running > 0,
-      sub: `${queued} queued · ${idle} idle`,
+      sub: waiting.join(' · '),
       viz: meter(running / total, 'live'),
     }),
     panel('w-6', 'Waiting on you', [null, f.count(blocked), blocked === 1 ? 'agent' : 'agents'], {
@@ -346,7 +477,7 @@ function savingsPlate(sav) {
   const max = Math.max(actual, equiv, 1e-9);
   const ratio = (actual > 0 && equiv > 0)
     ? `${((1 - actual / equiv) * 100).toFixed(1)}% cheaper · ${(equiv / actual).toFixed(0)}× ratio`
-    : 'estimated against the Fable price sheet';
+    : (equiv > 0 ? 'no metered DeepSeek spend recorded yet' : 'no DeepSeek work has run yet');
 
   const compare = h('div', { class: 'panel w-16' },
     h('div', { class: 'panel-title' }, 'DeepSeek actual vs the same work on Fable',
