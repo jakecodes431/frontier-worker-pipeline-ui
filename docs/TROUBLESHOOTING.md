@@ -250,8 +250,11 @@ means "0% used":
   not zero remaining and not unlimited. Claude plan limits appear only after a
   statusLine observation (a managed session, or the block from **Connect Claude
   usage**); before that they are unknown, not zero. DeepSeek limits are unknown.
-- Spend is banked on the local day the increment was measured, not entirely on
-  the day the session started. Registering the same session twice can count it
+- Spend is priced at read time from the per-day TOKEN increments and the loaded
+  `config/pricing.json`, so a price row that lands late reprices the day the
+  tokens were recorded rather than dumping a whole session into today. The sheet
+  is read when the server starts: edit `config/pricing.json` and restart to apply
+  a rate change. Registering the same session twice can still count its tokens
   twice; remove accidental duplicate registrations.
 
 ---

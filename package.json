@@ -29,7 +29,7 @@
     "start": "node server/index.js",
     "dev": "node --watch server/index.js",
     "cr": "node bin/cr.js",
-    "check": "node scripts/smoke.mjs && node scripts/runtime-tests.mjs && node scripts/ui-tests.mjs && node scripts/limit-tests.mjs && node scripts/lifecycle-tests.mjs && node scripts/history-tests.mjs && node scripts/budget-tests.mjs && node scripts/usage-connection-tests.mjs && node scripts/pricing-tests.mjs && node scripts/directory-picker-tests.mjs && node scripts/delivery-tests.mjs && node scripts/queued-delivery-tests.mjs && node scripts/agent-stop-tests.mjs",
+    "check": "node scripts/smoke.mjs && node scripts/runtime-tests.mjs && node scripts/ui-tests.mjs && node scripts/limit-tests.mjs && node scripts/lifecycle-tests.mjs && node scripts/history-tests.mjs && node scripts/budget-tests.mjs && node scripts/usage-connection-tests.mjs && node scripts/pricing-tests.mjs && node scripts/pricing-history-tests.mjs && node scripts/directory-picker-tests.mjs && node scripts/delivery-tests.mjs && node scripts/queued-delivery-tests.mjs && node scripts/agent-stop-tests.mjs",
     "test": "npm run check"
   },
   "dependencies": {

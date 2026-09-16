@@ -337,27 +337,33 @@ try {
     /^\d{4}-\d{2}-\d{2}$/.test(u.spendWindows.today) && u.spendWindows.monthFrom.endsWith('-01'));
   check('current run states what it sums', typeof u.currentRun.basis === 'string' && u.currentRun.basis.length > 10);
 
-  // Spend is banked on the day it is observed, as a delta, and does not
-  // double-count when the same cumulative figure is recorded twice.
+  // TOKEN deltas are banked on the day they are observed and priced at read
+  // time from the current sheet (server/db.js priceTokenRows), so the same
+  // cumulative recorded twice must not double-count. deepseek-flash is a priced
+  // model (0.15/M input, 0.60/M output) so the window is non-zero.
   const { usageSamples } = await import(pathToFileURL(path.join(ROOT, 'server', 'db.js')).href)
     .catch(() => ({ usageSamples: null }));
   if (usageSamples) {
     const day = new Date();
     const key = `${day.getFullYear()}-${String(day.getMonth() + 1).padStart(2, '0')}-${String(day.getDate()).padStart(2, '0')}`;
     const id = 'smoke-usage';
+    const price = (i, o) => (i * 0.15 + o * 0.60) / 1e6;
     usageSamples.forget(id);
     const before = usageSamples.spendSince(key);
-    usageSamples.record(id, 'm', key, { inputTokens: 100, cacheReadTokens: 0, cacheWriteTokens: 0, outputTokens: 10 }, 1.0);
-    usageSamples.record(id, 'm', key, { inputTokens: 100, cacheReadTokens: 0, cacheWriteTokens: 0, outputTokens: 10 }, 1.0);
+    usageSamples.record(id, 'deepseek-flash', key, { inputTokens: 100, cacheReadTokens: 0, cacheWriteTokens: 0, outputTokens: 10 }, 1.0);
+    usageSamples.record(id, 'deepseek-flash', key, { inputTokens: 100, cacheReadTokens: 0, cacheWriteTokens: 0, outputTokens: 10 }, 1.0);
     const once = usageSamples.spendSince(key) - before;
-    usageSamples.record(id, 'm', key, { inputTokens: 200, cacheReadTokens: 0, cacheWriteTokens: 0, outputTokens: 20 }, 2.5);
+    usageSamples.record(id, 'deepseek-flash', key, { inputTokens: 200, cacheReadTokens: 0, cacheWriteTokens: 0, outputTokens: 20 }, 2.5);
     const grown = usageSamples.spendSince(key) - before;
-    usageSamples.record(id, 'm', key, { inputTokens: 5, cacheReadTokens: 0, cacheWriteTokens: 0, outputTokens: 1 }, 0.25);
+    usageSamples.record(id, 'deepseek-flash', key, { inputTokens: 5, cacheReadTokens: 0, cacheWriteTokens: 0, outputTokens: 1 }, 0.25);
     const afterRestart = usageSamples.spendSince(key) - before;
+    const banked = usageSamples.rows(id).filter((r) => r.model === 'deepseek-flash');
+    const dayTokens = banked.reduce((n, r) => n + r.input_tokens + r.output_tokens, 0);
     usageSamples.forget(id);
-    check('recording the same cumulative usage twice does not double-count', Math.abs(once - 1.0) < 1e-9, String(once));
-    check('growing cumulative usage banks only the increment', Math.abs(grown - 2.5) < 1e-9, String(grown));
-    check('a restarted session (usage resets) banks its new usage', Math.abs(afterRestart - 2.75) < 1e-9, String(afterRestart));
+    check('recording the same cumulative usage twice does not double-count', Math.abs(once - price(100, 10)) < 1e-12, String(once));
+    check('growing cumulative usage banks only the increment', Math.abs(grown - price(200, 20)) < 1e-12, String(grown));
+    check('a restarted session (usage resets) banks its new usage once', Math.abs(afterRestart - (price(200, 20) + price(5, 1))) < 1e-12, String(afterRestart));
+    check('the stored token columns hold the deltas exactly once', dayTokens === 226, String(dayTokens));
   } else {
     check('usage sample arithmetic is testable', false, 'could not import server/db.js');
   }

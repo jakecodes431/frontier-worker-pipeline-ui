@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { DATA_DIR } from './config.js';
+import { DATA_DIR, costOf } from './config.js';
 
 // node:sqlite landed in Node 22. Importing it on an older runtime throws
 // ERR_UNKNOWN_BUILTIN_MODULE with no hint at all, so say what is wrong.
@@ -71,6 +71,10 @@ CREATE TABLE IF NOT EXISTS usage_samples (
   cache_read_tokens INTEGER NOT NULL DEFAULT 0,
   cache_write_tokens INTEGER NOT NULL DEFAULT 0,
   output_tokens INTEGER NOT NULL DEFAULT 0,
+  -- DIAGNOSTIC ONLY: the sheet's price for the delta at write time. NO spend
+  -- window reads this column; windows price the token columns at read time
+  -- (see priceTokenRows). It is kept so a row can explain what it was bought
+  -- against, not to be added up.
   cost_usd REAL NOT NULL DEFAULT 0,
   updated_at TEXT NOT NULL,
   PRIMARY KEY (agent_id, model, day)
@@ -196,9 +200,41 @@ const stmts = {
       cache_write_tokens=excluded.cache_write_tokens, output_tokens=excluded.output_tokens, cost_usd=excluded.cost_usd, updated_at=excluded.updated_at`),
   dropCursors: db.prepare('DELETE FROM usage_cursors WHERE agent_id = ?'),
   dropSamples: db.prepare('DELETE FROM usage_samples WHERE agent_id = ?'),
-  usageSince: db.prepare('SELECT SUM(cost_usd) AS cost FROM usage_samples WHERE day >= ?'),
+  // A spend window reads the TOKEN columns, never cost_usd; see priceTokenRows.
+  usageRowsSince: db.prepare(`SELECT model, input_tokens, cache_read_tokens, cache_write_tokens, output_tokens
+    FROM usage_samples WHERE day >= ?`),
+  usageRowsSinceRuntime: db.prepare(`SELECT u.model, u.input_tokens, u.cache_read_tokens, u.cache_write_tokens, u.output_tokens
+    FROM usage_samples u JOIN agents a ON a.id = u.agent_id WHERE a.runtime = ? AND u.day >= ?`),
   usageByAgentDay: db.prepare('SELECT * FROM usage_samples WHERE agent_id = ?'),
 };
+
+/**
+ * Price stored TOKEN columns at read time with the CURRENT price sheet.
+ *
+ * This is the ONLY thing a spend window is made of. `usage_samples.cost_usd` is
+ * a diagnostic snapshot of what the sheet said when the row was written; it is
+ * deliberately NOT summed into any window, because a cost delta is a function of
+ * when a price row landed and when the server restarted rather than of the work.
+ * Tokens are what the transcript actually measured, so pricing them now means a
+ * newly priced model re-prices its whole history in place and an edited rate
+ * moves every affected past day — with no backfill and no stored dollar delta.
+ *
+ * `costOf` gets no per-request input size here: a row is a whole day's tokens,
+ * so the long-context multiplier cannot be reconstructed from it and defaults
+ * to 1 (the same conservative choice as `requestInputTokens = 0`).
+ */
+function priceTokenRows(rows) {
+  let total = 0;
+  for (const r of rows) {
+    total += costOf({
+      inputTokens: Number(r.input_tokens) || 0,
+      cacheReadTokens: Number(r.cache_read_tokens) || 0,
+      cacheWriteTokens: Number(r.cache_write_tokens) || 0,
+      outputTokens: Number(r.output_tokens) || 0,
+    }, r.model);
+  }
+  return total;
+}
 
 export const agents = {
   create(a) {
@@ -293,9 +329,16 @@ export const usageSamples = {
    * double-counted every restart, because a restart moved startedAt and opened
    * a second row holding the whole session again.
    *
+   * TOKENS are the window's input: they are banked as deltas and priced later,
+   * at read time, from the current sheet (see priceTokenRows). `cost_usd` is
+   * written too, but only as a diagnostic snapshot of the sheet at write time.
+   *
    * A cumulative figure that goes DOWN means the underlying session was
    * replaced (a DeepSeek worker restarted into a fresh session file), so the
-   * new reading is banked whole and becomes the new baseline.
+   * new TOKEN reading is banked whole and becomes the new baseline. That
+   * decision is made from tokens alone: a falling dollar figure (a cheaper
+   * sheet) must never re-bank a day's tokens, or the same work would be counted
+   * twice. Conversely the cost delta never decides what a window shows.
    */
   record(agentId, model, day, cumulative, cumulativeCost) {
     const key = model || 'unknown';
@@ -309,12 +352,14 @@ export const usageSamples = {
       if (next < was) restarted = true;
       delta[camel] = next - was;
     }
+    if (restarted) for (const [camel] of FIELDS) delta[camel] = Number(cumulative[camel]) || 0;
+    // Diagnostic column only — see the priceTokenRows comment. A negative delta
+    // is clamped to 0 rather than re-banking: the column keeps recording what
+    // the sheet said at write time and is never a source of a window total.
     let deltaCost = cost - (prev ? Number(prev.cost_usd) || 0 : 0);
-    if (restarted || deltaCost < 0) {
-      for (const [camel] of FIELDS) delta[camel] = Number(cumulative[camel]) || 0;
-      deltaCost = cost;
-    }
-    const moved = deltaCost !== 0 || FIELDS.some(([camel]) => delta[camel] !== 0);
+    if (restarted) deltaCost = cost;
+    else deltaCost = Math.max(0, deltaCost);
+    const moved = FIELDS.some(([camel]) => delta[camel] !== 0) || deltaCost !== 0;
     if (!moved) return false;
     stmts.addUsage.run(agentId, key, day, delta.inputTokens, delta.cacheReadTokens, delta.cacheWriteTokens, delta.outputTokens, deltaCost, now());
     stmts.setCursor.run(agentId, key, Number(cumulative.inputTokens) || 0, Number(cumulative.cacheReadTokens) || 0,
@@ -323,8 +368,15 @@ export const usageSamples = {
   },
   /** Deleting an agent does not rewrite history; this is for tests and resets. */
   forget(agentId) { stmts.dropCursors.run(agentId); stmts.dropSamples.run(agentId); },
-  spendSince(day) { return stmts.usageSince.get(day)?.cost || 0; },
-  spendRuntimeSince(runtime, day) { return db.prepare('SELECT COALESCE(SUM(u.cost_usd),0) AS cost FROM usage_samples u JOIN agents a ON a.id=u.agent_id WHERE a.runtime=? AND u.day>=?').get(runtime, day).cost; },
+  /**
+   * USD spent on and after `day`, priced at read time from the stored token
+   * deltas against the model's CURRENT rate. A model with no price row (and no
+   * deliberate marker) contributes 0; it is reported as unpriced by the usage
+   * readers, not by this sum.
+   */
+  spendSince(day) { return priceTokenRows(stmts.usageRowsSince.all(day)); },
+  /** Same read-time pricing, restricted to agents of one runtime (the DeepSeek budget). */
+  spendRuntimeSince(runtime, day) { return priceTokenRows(stmts.usageRowsSinceRuntime.all(runtime, day)); },
   rows(agentId) { return stmts.usageByAgentDay.all(agentId); },
 };
 

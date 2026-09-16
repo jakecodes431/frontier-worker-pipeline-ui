@@ -390,8 +390,9 @@ function refreshUsage(id, { reprice = false } = {}) {
     if (silence > (config.runtimes[a.runtime].idleAfterSilenceMs || 20000) && r.lastRole === 'assistant' && r.lastStop === 'end_turn') patch.status = 'idle';
   }
   agents.update(id, patch);
-  // Spend is banked on the day it is OBSERVED, in local time, as an increment
-  // over the last reading — see usageSamples.record.
+  // TOKEN deltas are banked on the day they are OBSERVED, in local time, as an
+  // increment over the last reading; the dollars are computed later, at read
+  // time, from the current price sheet — see usageSamples.record.
   const day = localDay();
   for (const [model, b] of Object.entries(r.byModel || {})) usageSamples.record(id, model, day, b, b.costUsd);
 }
@@ -475,7 +476,7 @@ function usageSummary() {
   const codexObservation = [...all].filter(a => a.usage?.limits).sort((a, b) => String(b.usage.limitsObservedAt || '').localeCompare(String(a.usage.limitsObservedAt || '')))[0]?.usage;
   return {
     spend: { today: usageSamples.spendSince(today), week: usageSamples.spendSince(week), month: usageSamples.spendSince(month) },
-    spendWindows: { today, weekFrom: week, monthFrom: month, basis: 'local calendar days; today is the increment banked since midnight local time' },
+    spendWindows: { today, weekFrom: week, monthFrom: month, basis: 'local calendar days; each day is the token delta banked for that local day, priced at read time from the current price sheet' },
     currentRun: { costUsd: runCost, startedAt: runStart, pricingKnown: !all.some(a => !TERMINAL.has(a.status) && a.usage?.pricingKnown === false), basis: 'total priced estimate of every agent that has not reached a terminal status' },
     byTier: tiers,
     byTierAgents: tierAgents,

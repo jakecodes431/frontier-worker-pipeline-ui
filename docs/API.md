@@ -304,11 +304,17 @@ both cases.
 }
 ```
 
-- `spend` is summed from persisted per-day usage samples, so it survives
-  restarts and includes agents that have since been deleted. Each sample is
-  banked as the **increment** since the previous reading of that session, so a
-  restart (or a re-read of the same transcript) does not double-count, and a
-  session whose counters reset starts adding again from zero.
+- `spend` is computed at **read time** from persisted per-day TOKEN samples,
+  priced against each model's current rate in `config/pricing.json`, so it
+  survives restarts and includes agents that have since been deleted. Each
+  sample stores the **token increment** since the previous reading of that
+  session, so a restart (or a re-read of the same transcript) does not
+  double-count, and a session whose counters reset starts adding again from
+  zero. A price row that lands later reprices the history already recorded
+  instead of banking a whole session into today; `usage_samples.cost_usd` is a
+  diagnostic snapshot of the sheet at write time and is never a window total.
+  The sheet is loaded when the server starts, so edit `config/pricing.json` and
+  restart to apply a rate change.
 - `spendWindows` names the days those figures cover, in the operator's **local**
   timezone — a UTC day key put an evening's work into "tomorrow" and made
   "spend today" read `$0.00` while money was being spent.
@@ -350,6 +356,10 @@ Operator-set daily cap on **measured DeepSeek spend** (see `server/budget.js`):
 ```
 
 - `GET /api/budget` reads the stored cap and today's measured spend.
+- `spentUsd` is the **DeepSeek-runtime** portion (`spendRuntimeSince`) of
+  `/api/usage` `spend.today`, on the same read-time basis: for that scope the two
+  agree exactly, and `spentUsd` is legitimately smaller than the whole-fleet
+  `spend.today` because Claude/Codex estimates are not part of the DeepSeek cap.
 - `POST /api/budget` with `{ "dailyUsd": <finite number > 0 and <= 1000000> }`
   stores it; `{ "dailyUsd": null }` clears it; any other value is `400` with the
   reason. Both verbs answer with the same payload.
