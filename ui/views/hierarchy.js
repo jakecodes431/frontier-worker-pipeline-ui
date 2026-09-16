@@ -14,9 +14,12 @@
 // here) are untouched by state frames. When an agent changes section or column
 // its element is MOVED and flashes briefly so the move is visible.
 
-import { h, setText, setAttr, qs } from '../lib/dom.js';
+import { h, setText, setAttr, qs, toast } from '../lib/dom.js';
 import * as f from '../lib/format.js';
-import { store, getAgents, getSelectedId, select, treeOrder, isLoaded, getConfig } from '../lib/store.js';
+import api from '../lib/api.js';
+import { openAgentMenu } from '../lib/contextmenu.js';
+import { requestStop } from '../lib/stop.js';
+import { store, getAgent, getAgents, getSelectedId, select, upsertAgent, treeOrder, isLoaded, getConfig } from '../lib/store.js';
 
 export const FINISHED = new Set(['done', 'failed', 'stopped']);
 const LS_FOLDER = 'cr.hierarchy.finishedOpen';
@@ -142,6 +145,13 @@ function move(current, key) {
 
 /** Shared row/card key handling: move, select, or fall through. */
 function onItemKey(ev, id) {
+  // Shift+F10 and the dedicated ContextMenu key are the keyboard equivalent of
+  // a right-click; both open the same per-agent menu.
+  if (ev.key === 'ContextMenu' || (ev.shiftKey && ev.key === 'F10')) {
+    ev.preventDefault();
+    openAgentContextMenu(ev, id);
+    return;
+  }
   if (ev.key === 'Enter' || ev.key === ' ' || ev.key === 'Spacebar') {
     ev.preventDefault();
     select(id);
@@ -152,6 +162,48 @@ function onItemKey(ev, id) {
   if (!next) return;
   ev.preventDefault();
   focusItem(next);
+}
+
+/**
+ * Open the agent actions menu from a pointer right-click or a keyboard open.
+ * A keyboard event has no useful clientX/Y, so the anchor's own box is used.
+ */
+function openAgentContextMenu(ev, id) {
+  const agent = getAgent(id);
+  if (!agent) return;
+  const anchor = ev.currentTarget || ev.target;
+  const rect = anchor && typeof anchor.getBoundingClientRect === 'function'
+    ? anchor.getBoundingClientRect()
+    : { left: 8, bottom: 8 };
+  const x = Number.isFinite(ev.clientX) && ev.clientX ? ev.clientX : rect.left + 16;
+  const y = Number.isFinite(ev.clientY) && ev.clientY ? ev.clientY : rect.bottom + 4;
+  openAgentMenu({ x, y, anchor, agent, onSelect: runAgentAction });
+}
+
+/** Run a menu action. Only Stop exists today; it talks to the lifecycle API. */
+async function runAgentAction(action, agent) {
+  if (action !== 'stop') return;
+  const label = agent.name || agent.id;
+  const result = await requestStop(agent, {
+    action: (id, name) => api.action(id, name),
+    confirm: (message) => window.confirm(message),
+    // Paint "stopping" now; the state frame that follows reconciles the truth.
+    onOptimistic: (next) => upsertAgent(next),
+    onSettled: (settled, err) => {
+      upsertAgent(settled);
+      if (err) {
+        toast(`Stop failed: ${err.message}`, 'error', 7000);
+        // A refused stop may have left the server in a different state than the
+        // one we optimistically painted; re-read rather than guess.
+        api.agent(settled.id)
+          .then((fresh) => { if (fresh && fresh.agent) upsertAgent(fresh.agent); })
+          .catch(() => { /* the next state frame will reconcile */ });
+      }
+    },
+  });
+  if (result.ok) toast(`Stopped "${label}".`, 'ok');
+  else if (result.disabled) toast(result.reason, 'error', 7000);
+  // A failed stop already reported itself from onSettled; a cancelled one is silent.
 }
 
 function setMode(next, force) {
@@ -231,7 +283,7 @@ function buildList() {
     h('div', { class: 'plate-head' },
       h('h2', { class: 'plate-title' }, 'Active'),
       activeCount,
-      h('span', { class: 'plate-note' }, 'queued, running, idle, paused and blocked, under their parents')),
+      h('span', { class: 'plate-note' }, 'queued, running, idle, paused and blocked, under their parents · right-click an agent to stop it')),
     h('div', { class: 'tree-cols', 'aria-hidden': 'true' },
       h('span', null, 'Agent'), h('span', null, 'Status'), h('span', null, 'Task'),
       h('span', null, 'Elapsed'), h('span', null, 'Tokens'), h('span', null, 'Cost')),
@@ -425,7 +477,9 @@ function buildRow(agent) {
   const row = h('div', {
     class: 'node', role: 'treeitem', tabindex: '-1',
     dataset: { id: agent.id },
+    'aria-haspopup': 'menu', 'aria-keyshortcuts': 'Shift+F10',
     onclick: () => { rovingId = agent.id; select(agent.id); },
+    oncontextmenu: (ev) => { ev.preventDefault(); openAgentContextMenu(ev, agent.id); },
     onkeydown: (ev) => onItemKey(ev, agent.id),
     onfocus: () => { rovingId = agent.id; },
   },
@@ -609,7 +663,9 @@ function buildCard(agent) {
   const cost = h('span', { class: 'kcard-stat-v' });
   const card = h('div', {
     class: 'kcard', role: 'listitem', tabindex: '-1', dataset: { id: agent.id },
+    'aria-haspopup': 'menu', 'aria-keyshortcuts': 'Shift+F10',
     onclick: () => { rovingId = agent.id; select(agent.id); },
+    oncontextmenu: (ev) => { ev.preventDefault(); openAgentContextMenu(ev, agent.id); },
     onkeydown: (ev) => onItemKey(ev, agent.id),
     onfocus: () => { rovingId = agent.id; },
   },

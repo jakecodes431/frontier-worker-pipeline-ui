@@ -466,6 +466,9 @@ export function mountCto({ view, badge }) {
     try {
       const res = await api.send(agentId, text, 'human');
       if (res && res.message && res.message.id != null && res.queued) queuedIds.add(res.message.id);
+      // A queued local message that could not be dispatched is still durable and
+      // retryable, but the operator must not read silence as success.
+      if (res && res.queued && res.deliveryError) toast('Queued, but not delivered: ' + res.deliveryError, 'error', 8000);
       pending = null;
       lastSig = '';
       await refresh();

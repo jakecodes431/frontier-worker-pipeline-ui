@@ -236,8 +236,11 @@ export function createChatTab(ctx) {
     lastSig = '';
     render();
     try {
-      await api.send(ctx.agentId, text, 'human');
+      const res = await api.send(ctx.agentId, text, 'human');
       pending = null; lastSig = '';
+      // A queued local message that could not be dispatched is still durable and
+      // retryable, but the operator must not read silence as success.
+      if (res && res.queued && res.deliveryError) toast('Queued, but not delivered: ' + res.deliveryError, 'error', 8000);
       await refresh();
     } catch (err) {
       pending = null; lastSig = '';

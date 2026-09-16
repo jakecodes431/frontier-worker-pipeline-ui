@@ -471,9 +471,12 @@ Rules the server enforces rather than trusts:
 - `send` from a parent is refused with `409` while a **human** holds control of
   the target — and only in that case is the text queued to the target's inbox
   instead. A `send` to a paused agent is refused with `409` and dropped; so is
-  one to an agent with no live terminal. (A `send` to an `external` agent is
-  always queued to its inbox, since there is no terminal to type into. Its chat
-  is read back from the provider transcript named by `transcriptRuntime`.)
+  one to an interactive agent with no live terminal. (A `send` to an `external`
+  agent is always queued to its inbox, since there is no terminal to type into.
+  A `send` to a one-shot local worker is queued durably and then dispatched to a
+  fresh run of that worker whose prompt carries the queued messages — never into
+  stdin. It is acknowledged only once that run starts, so a refused or failed
+  dispatch stays in the inbox and is retried on the next send, restart, or exit.)
 - `status` only accepts `done`, `blocked`, `failed`, `running`, `idle`. A child
   marking itself `blocked` automatically posts `BLOCKED: <note>` to its
   parent's inbox.
