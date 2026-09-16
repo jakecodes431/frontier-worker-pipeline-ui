@@ -99,6 +99,11 @@ reports folded into the same thread.
 
 ![Chat](docs/screenshots/cto.png)
 
+**First run** — what an empty database shows instead of a grid of zeroes: the
+two ways in, and every view has its own empty state.
+
+![First run](docs/screenshots/first-run.png)
+
 ---
 
 ## Quick start
