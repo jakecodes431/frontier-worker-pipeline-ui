@@ -53,6 +53,7 @@ CREATE TABLE IF NOT EXISTS messages (
   sender TEXT NOT NULL,
   text TEXT NOT NULL,
   read INTEGER NOT NULL DEFAULT 0,
+  deliver INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS events (
@@ -95,6 +96,12 @@ const agentColumns = new Set(db.prepare('PRAGMA table_info(agents)').all().map(c
 for (const column of ['transcript_runtime', 'continued_from_id', 'successor_id']) {
   if (!agentColumns.has(column)) db.exec(`ALTER TABLE agents ADD COLUMN ${column} TEXT`);
 }
+
+// `deliver` marks queued operator/parent input that a managed local run must
+// consume (see messages.pendingDelivery). Existing rows default to 0, so an old
+// database is never retroactively dispatched.
+const messageColumns = new Set(db.prepare('PRAGMA table_info(messages)').all().map(c => c.name));
+if (!messageColumns.has('deliver')) db.exec('ALTER TABLE messages ADD COLUMN deliver INTEGER NOT NULL DEFAULT 0');
 
 // One-time migration for databases written before usage_samples held per-day
 // DELTAS: seed each cursor from what was already recorded so the next refresh
@@ -170,9 +177,10 @@ const stmts = {
   allAgents: db.prepare('SELECT * FROM agents ORDER BY created_at'),
   children: db.prepare('SELECT * FROM agents WHERE parent_id = ? ORDER BY created_at'),
   deleteAgent: db.prepare('DELETE FROM agents WHERE id = ?'),
-  insertMessage: db.prepare('INSERT INTO messages (agent_id,from_agent_id,direction,sender,text,created_at) VALUES (?,?,?,?,?,?)'),
+  insertMessage: db.prepare('INSERT INTO messages (agent_id,from_agent_id,direction,sender,text,deliver,created_at) VALUES (?,?,?,?,?,?,?)'),
   messagesFor: db.prepare('SELECT * FROM messages WHERE agent_id = ? ORDER BY created_at DESC, id DESC LIMIT ?'),
   inboxFor: db.prepare("SELECT * FROM messages WHERE agent_id = ? AND direction = 'report' AND read = 0 ORDER BY id"),
+  pendingDelivery: db.prepare("SELECT * FROM messages WHERE agent_id = ? AND direction = 'report' AND read = 0 AND deliver = 1 ORDER BY id"),
   markRead: db.prepare("UPDATE messages SET read = 1 WHERE agent_id = ? AND direction = 'report'"),
   insertEvent: db.prepare('INSERT INTO events (agent_id,kind,data,created_at) VALUES (?,?,?,?)'),
   eventsFor: db.prepare('SELECT * FROM events WHERE agent_id = ? ORDER BY id DESC LIMIT ?'),
@@ -227,17 +235,32 @@ export const agents = {
 };
 
 export const messages = {
-  add({ agentId, fromAgentId = null, direction, sender, text }) {
-    const r = stmts.insertMessage.run(agentId, fromAgentId, direction, sender, text, now());
-    return { id: Number(r.lastInsertRowid), agentId, fromAgentId, direction, sender, text, createdAt: now() };
+  add({ agentId, fromAgentId = null, direction, sender, text, deliver = false }) {
+    const at = now();
+    const r = stmts.insertMessage.run(agentId, fromAgentId, direction, sender, text, deliver ? 1 : 0, at);
+    return { id: Number(r.lastInsertRowid), agentId, fromAgentId, direction, sender, text, deliver: Boolean(deliver), createdAt: at };
   },
   list(agentId, limit = 200) {
-    return stmts.messagesFor.all(agentId, limit).reverse().map(m => ({ id: m.id, agentId: m.agent_id, fromAgentId: m.from_agent_id, direction: m.direction, sender: m.sender, text: m.text, read: !!m.read, createdAt: m.created_at }));
+    return stmts.messagesFor.all(agentId, limit).reverse().map(m => ({ id: m.id, agentId: m.agent_id, fromAgentId: m.from_agent_id, direction: m.direction, sender: m.sender, text: m.text, read: !!m.read, deliver: !!m.deliver, createdAt: m.created_at }));
   },
   inbox(agentId, markRead = false) {
-    const rows = stmts.inboxFor.all(agentId).map(m => ({ id: m.id, agentId: m.agent_id, fromAgentId: m.from_agent_id, direction: m.direction, sender: m.sender, text: m.text, createdAt: m.created_at }));
+    const rows = stmts.inboxFor.all(agentId).map(m => ({ id: m.id, agentId: m.agent_id, fromAgentId: m.from_agent_id, direction: m.direction, sender: m.sender, text: m.text, deliver: !!m.deliver, createdAt: m.created_at }));
     if (markRead) stmts.markRead.run(agentId);
     return rows;
+  },
+  /**
+   * Unread queued input a managed local run still has to consume, oldest first.
+   * Reports from children are deliberately excluded: only `send` sets `deliver`.
+   */
+  pendingDelivery(agentId) {
+    return stmts.pendingDelivery.all(agentId).map(m => ({ id: m.id, agentId: m.agent_id, fromAgentId: m.from_agent_id, direction: m.direction, sender: m.sender, text: m.text, createdAt: m.created_at }));
+  },
+  /** Mark exactly these messages read (delivery ack); returns how many changed. */
+  ackIds(ids) {
+    const list = (ids || []).filter((n) => Number.isInteger(n));
+    if (!list.length) return 0;
+    const sql = `UPDATE messages SET read = 1 WHERE id IN (${list.map(() => '?').join(',')})`;
+    return Number(db.prepare(sql).run(...list).changes) || 0;
   },
 };
 

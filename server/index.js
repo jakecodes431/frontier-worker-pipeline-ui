@@ -113,7 +113,7 @@ function pushState() {
 // ----------------------------------------------------------------------------
 // spawning
 // ----------------------------------------------------------------------------
-async function spawnAgent(agent, { resume = false } = {}) {
+async function spawnAgent(agent, { resume = false, prompt } = {}) {
   const ad = adapters[agent.runtime];
   if (!ad) throw new Error(`unknown runtime ${agent.runtime}`);
   if (agent.runtime === 'external') throw badRequest('External sessions are tracked only. Use Continue with Codex or Claude to create a managed terminal.');
@@ -122,7 +122,10 @@ async function spawnAgent(agent, { resume = false } = {}) {
     const e = new Error('An earlier process is still running without an attached terminal. Stop it before restarting.'); e.code = 409; throw e;
   }
   if (!agent.cwd || !fs.existsSync(agent.cwd)) throw badRequest(`working directory no longer exists: ${agent.cwd || '(none)'}`);
-  const { command, args, env } = ad.build(agent, PORT, { resume });
+  // A delivery run carries a composed prompt (the brief plus queued messages);
+  // the record's own prompt is left untouched so the queue is not re-read later.
+  const target = prompt == null ? agent : { ...agent, prompt };
+  const { command, args, env } = ad.build(target, PORT, { resume });
   agents.update(agent.id, { status: 'running', startedAt: agent.startedAt && resume ? agent.startedAt : nowIso(), endedAt: null, exitCode: null });
   const { pid, exited } = await ptys.spawn(agent.id, { command: resolveCommand(command), args, cwd: agent.cwd, env });
   if (!exited) agents.update(agent.id, { pid });
@@ -203,6 +206,111 @@ async function stopAgent(a) {
   return agents.update(a.id, { status: 'stopped', endedAt: a.endedAt || nowIso(), pid: null });
 }
 
+// ----------------------------------------------------------------------------
+// queued local delivery
+//
+// A one-shot local worker (DeepSeek) consumes its only prompt and exits, so a
+// follow-up cannot be typed into a terminal: there is none. `POST /send` stores
+// it durably instead (messages.deliver = 1). The functions below are the path
+// that then consumes that queue: they compose a fresh run prompt from the
+// messages, start the local model again, and mark the messages read ONLY after
+// the run actually starts — so a refused or failed delivery stays in the inbox
+// and can be retried. Stdin is never written to.
+// ----------------------------------------------------------------------------
+
+/** Managed statuses that mean a terminal/process is attached (mirrors ui/views/newagent.js). */
+const LIVE_STATUSES = ['running', 'idle', 'paused', 'stopping'];
+
+/**
+ * Whether an agent may have queued input dispatched to it right now, kept pure
+ * so every refusal leaf can be asserted without spawning anything.
+ * `allowHumanControl` is for the human operator's own send/restart: the guard
+ * exists to keep agent input from racing a human-held prompt, not to block the
+ * human who owns it.
+ */
+export function deliveryEligibility(agent = {}, { live, allowHumanControl = false } = {}) {
+  if (!agent || !agent.id) return { ok: false, reason: 'no agent' };
+  const isLive = typeof live === 'boolean' ? live : LIVE_STATUSES.includes(agent.status);
+  if (agent.runtime === 'external') return { ok: false, reason: 'external sessions have no local run to dispatch to' };
+  if (agent.controlledBy === 'human' && !allowHumanControl) return { ok: false, reason: 'a human holds control of this agent' };
+  if (agent.status === 'paused') return { ok: false, reason: 'agent is paused' };
+  if (agent.successorId) return { ok: false, reason: `the task already continued as ${agent.successorId}` };
+  if (isLive) return { ok: false, live: true, reason: 'a live terminal still owns this agent' };
+  return { ok: true, live: false };
+}
+
+/**
+ * Compose the prompt a delivery run receives: the agent's own brief first, then
+ * the queued messages in id order with the sender the server recorded. Sender
+ * identity is authoritative and ordering is preserved.
+ */
+export function buildDeliveryPrompt(agent, queued) {
+  const base = String(agent.prompt ?? '').trim();
+  const header = [
+    '## Queued messages delivered by the control room',
+    '',
+    `No live prompt was available when these were sent to ${agent.name || agent.id} (${agent.id}). They are your next instruction, in the order shown. The recorded sender identity is authoritative; do not reorder or merge them.`,
+    '',
+  ].join('\n');
+  const lines = queued.map((m) => `- [${m.createdAt}] ${m.sender}: ${String(m.text ?? '').replace(/\r?\n/g, '\n  ')}`);
+  return [base, '', header, ...lines].join('\n').trim();
+}
+
+/** One delivery attempt per agent at a time, so two rapid sends cannot double-run. */
+const deliveriesInFlight = new Set();
+
+/**
+ * Consume this agent's unread queued input by starting a fresh local run whose
+ * prompt carries those messages. Returns what actually happened:
+ *   { delivered: true, count }                      the run started and input was acked
+ *   { delivered: false, deferred: true, reason }    not the right moment (retry later)
+ *   { delivered: false, error }                     the run was refused/failed (still unread)
+ *
+ * `spawn` is injectable so the delivery contract can be tested without a pty.
+ */
+export async function deliverQueued(agent, { spawn = spawnAgent, resume = false, allowUnstarted = true, allowHumanControl = false } = {}) {
+  const current = (agent && agent.id && agents.get(agent.id)) || agent;
+  if (!current || !current.id) return { delivered: false, reason: 'no agent' };
+  const queued = messages.pendingDelivery(current.id);
+  if (!queued.length) return { delivered: false, reason: 'nothing is queued for delivery' };
+  const gate = deliveryEligibility(current, { live: ptys.has(current.id), allowHumanControl });
+  if (!gate.ok) return { delivered: false, deferred: true, reason: gate.reason };
+  if (current.status === 'queued' && !allowUnstarted) {
+    return { delivered: false, deferred: true, reason: 'the agent has not started yet; the message will be delivered when it does' };
+  }
+  if (deliveriesInFlight.has(current.id)) return { delivered: false, deferred: true, reason: 'a delivery is already in flight' };
+  deliveriesInFlight.add(current.id);
+  try {
+    const prompt = buildDeliveryPrompt(current, queued);
+    await spawn(current, { prompt, resume });
+    const messageIds = queued.map((m) => m.id);
+    messages.ackIds(messageIds);
+    log(current.id, 'delivered', { messageIds, senders: queued.map((m) => m.sender), count: messageIds.length });
+    pushAgent(current.id);
+    return { delivered: true, count: messageIds.length, messageIds };
+  } catch (e) {
+    const error = firstLine(e && e.message);
+    log(current.id, 'delivery-error', { message: error, messageIds: queued.map((m) => m.id) });
+    return { delivered: false, error };
+  } finally {
+    deliveriesInFlight.delete(current.id);
+  }
+}
+
+/**
+ * After a one-shot local run exits, start the follow-up that consumes anything
+ * queued while it ran. An explicit stop is never continued, and external
+ * sessions are never dispatched to. Exported so the decision is testable.
+ */
+export function maybeDeliverAfterExit(agentId, opts = {}) {
+  const a = agents.get(agentId);
+  if (!a) return Promise.resolve({ delivered: false, reason: 'no agent' });
+  if (opts.wasStopping) return Promise.resolve({ delivered: false, reason: 'the agent was stopped on purpose' });
+  const ad = adapters[a.runtime];
+  if (!ad?.oneShot || a.runtime === 'external' || a.successorId) return Promise.resolve({ delivered: false, reason: 'not a one-shot local exit' });
+  return deliverQueued(a, opts);
+}
+
 async function handoffAgent(a, body) {
   if (!['claude', 'codex'].includes(body.runtime) || !config.runtimes[body.runtime]) throw badRequest('handoff runtime must be an installed claude or codex adapter');
   if (a.role === 'worker') throw badRequest('Provider handoff is for CTO and orchestrator roles');
@@ -251,6 +359,13 @@ ptys.on('exit', (id, { exitCode }) => {
     messages.add({ agentId: a.parentId, fromAgentId: id, direction: 'report', sender: 'system', text: `${a.name} (${id}) exited with code ${exitCode}; status ${status}.` });
   }
   pushState();
+  // A one-shot local worker that exited with unread queued input has not finished
+  // the conversation: start the follow-up run that consumes it. Explicit stops are
+  // never continued, and only messages sent with `deliver` are eligible.
+  if (ad?.oneShot && a.runtime !== 'external' && !a.successorId) {
+    maybeDeliverAfterExit(id, { wasStopping: a.status === 'stopping' })
+      .catch((e) => log(id, 'delivery-error', firstLine(e && e.message)));
+  }
 });
 
 // ----------------------------------------------------------------------------
@@ -456,28 +571,46 @@ async function api(req, res, url) {
       const sender = senderOf(req);
       if (!String(body.text ?? '').trim()) return json(res, 400, { error: 'text is required' });
       const text = String(body.text ?? '');
+      const fromAgentId = sender.startsWith('agent:') ? sender.slice(6) : null;
       // A follow-up that cannot reach a live prompt must still be delivered. Store it as
       // a durable inbox message (direction=report, the direction GET inbox reads) so the
-      // agent picks it up on its next inbox check, and answer queued:true instead of
-      // pretending the active prompt changed.
-      const queueInbox = () => {
-        const msg = messages.add({ agentId: id, fromAgentId: sender.startsWith('agent:') ? sender.slice(6) : null, direction: 'report', sender, text });
+      // delivery path can consume it, and answer queued:true instead of pretending the
+      // active prompt changed. `deliver` marks input a managed local run should consume;
+      // an external session only ever reads its inbox.
+      const queueInbox = (deliver) => {
+        const msg = messages.add({ agentId: id, fromAgentId, direction: 'report', sender, text, deliver });
         broadcast({ type: 'message', message: msg });
-        log(id, 'send', { sender, chars: text.length, queued: true });
-        return json(res, 200, { ok: true, queued: true, message: msg });
+        log(id, 'send', { sender, chars: text.length, queued: true, deliver: Boolean(deliver) });
+        return msg;
       };
       // A human holds the terminal: refuse parent input, but keep the refusal (and the
       // text it carries) visible in the inbox rather than dropping it on direction=in.
-      if (a.controlledBy === 'human' && sender !== 'human') return json(res, 409, { error: 'a human holds control of this agent; message queued to its inbox instead', queued: true, message: messages.add({ agentId: id, fromAgentId: sender.replace(/^agent:/, ''), direction: 'report', sender, text }) });
+      // It is never auto-delivered: the human owns that prompt.
+      if (a.controlledBy === 'human' && sender !== 'human') {
+        return json(res, 409, { error: 'a human holds control of this agent; message queued to its inbox instead', queued: true, message: queueInbox(false) });
+      }
       if (a.status === 'paused' && sender !== 'human') return json(res, 409, { error: 'agent is paused' });
-      // External sessions have no terminal at all, and one-shot workers consumed their only
-      // prompt: writing into either would silently discard the message, so queue it instead.
-      if (a.runtime === 'external' || adapters[a.runtime]?.oneShot) return queueInbox();
+      // External sessions have no terminal at all. Queue for the registered session
+      // to read, and never start anything on its behalf.
+      if (a.runtime === 'external') return json(res, 200, { ok: true, queued: true, message: queueInbox(false) });
+      // A one-shot local worker consumed its only prompt, so a follow-up is queued
+      // durably and then dispatched to a fresh run of the same local model. Nothing
+      // is written to stdin. A model with no run yet keeps the message until it starts.
+      if (adapters[a.runtime]?.oneShot) {
+        const msg = queueInbox(true);
+        // The human who owns the prompt may dispatch their own message; agent
+        // input stays behind the human-control guard.
+        const delivery = await deliverQueued(agents.get(id), { allowUnstarted: false, allowHumanControl: sender === 'human' });
+        const payload = { ok: true, queued: true, delivered: Boolean(delivery.delivered), message: msg };
+        if (delivery.error) payload.deliveryError = delivery.error;
+        else if (delivery.reason) payload.deliveryReason = delivery.reason;
+        return json(res, 200, payload);
+      }
       if (!ptys.has(id)) return json(res, 409, { error: `"${a.name}" has no live terminal (status: ${a.status}). Restart it to send it anything.` });
       ptys.write(id, text);
       // Claude Code's prompt submits on Enter; give the TUI a beat to ingest a paste before submitting.
       setTimeout(() => { try { ptys.write(id, '\r'); } catch { /* exited */ } }, text.length > 200 ? 400 : 120);
-      messages.add({ agentId: id, fromAgentId: sender.startsWith('agent:') ? sender.slice(6) : null, direction: 'in', sender, text });
+      messages.add({ agentId: id, fromAgentId, direction: 'in', sender, text });
       log(id, 'send', { sender, chars: text.length });
       if (a.status === 'idle') { agents.update(id, { status: 'running' }); pushAgent(id); }
       return json(res, 200, { ok: true });
@@ -503,7 +636,16 @@ async function api(req, res, url) {
         if (ptys.has(id)) await stopAgent(a);
         refreshUsage(id);
         const resume = ['claude', 'codex'].includes(a.runtime) && !!agents.get(id).sessionId;
-        await spawnAgent(agents.get(id), { resume });
+        // A restart is also an explicit start: any queued operator input is
+        // delivered by the new run, in order, and acked only if it really starts.
+        if (messages.pendingDelivery(id).length) {
+          const delivery = await deliverQueued(agents.get(id), { resume, allowHumanControl: true });
+          if (!delivery.delivered) {
+            const e = new Error(delivery.error || delivery.reason || 'queued messages could not be delivered; nothing was started'); e.code = 409; throw e;
+          }
+        } else {
+          await spawnAgent(agents.get(id), { resume });
+        }
       } else if (action === 'interrupt') {
         if (!ptys.has(id)) return json(res, 409, { error: 'No live terminal to interrupt' });
         if (ptys.has(id)) ptys.write(id, '\x1b');

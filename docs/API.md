@@ -92,13 +92,17 @@ a charge. Worker dollar values are also price-sheet estimates; no billing API is
 { "id": 12, "agentId": "a-…", "fromAgentId": "a-…|null",
   "direction": "in | out | report | system",
   "sender": "human | agent:<id> | parent | system",
-  "text": "…", "createdAt": "ISO" }
+  "text": "…", "deliver": false, "createdAt": "ISO" }
 ```
+
+`deliver` is `true` only on messages queued by `POST /send` for a managed
+one-shot local model: they are the durable input that the local delivery path
+consumes in a fresh run. Reports from children never set it.
 
 ### Event
 
 ```json
-{ "id": 34, "agentId": "a-…", "kind": "created | spawned | resumed | exit | status | control | action | report | send | lost | error | usage-error",
+{ "id": 34, "agentId": "a-…", "kind": "created | spawned | resumed | exit | status | control | action | report | send | delivered | delivery-error | lost | error | usage-error",
   "data": {}, "createdAt": "ISO" }
 ```
 
@@ -120,7 +124,7 @@ a charge. Worker dollar values are also price-sheet estimates; no billing API is
 | POST | `/api/agents` | see below | `201` + `Agent`, or `400 { error }` naming the field that is wrong |
 | GET | `/api/agents/:id` | | `{ agent, messages, events, children: Agent[] }` (refreshes usage first; `events` capped at 200) |
 | DELETE | `/api/agents/:id` | | `{ ok: true }`. `409` while the agent has a live terminal. Children are re-parented to the deleted agent's parent. The git worktree is **not** removed. |
-| POST | `/api/agents/:id/send` | `{ text }`, header `X-Sender: human \| agent:<id>` | `{ ok: true }`, or `{ ok: true, queued: true, message }` for an `external` agent; see *Send semantics*. `400` on empty text |
+| POST | `/api/agents/:id/send` | `{ text }`, header `X-Sender: human \| agent:<id>` | `{ ok: true }`, or `{ ok: true, queued: true, message, delivered?, deliveryError? }` when no live prompt can take it; see *Send semantics*. `400` on empty text |
 | POST | `/api/agents/:id/input` | `{ data }` raw pty bytes | `{ ok: true }`, or `409` when the agent has no live terminal |
 | POST | `/api/agents/:id/control` | `{ holder: "human" \| "parent" }` | `Agent` |
 | POST | `/api/agents/:id/action` | `{ action: "stop" \| "restart" \| "interrupt" \| "pause" \| "resume" }` | `Agent`, or `400` for an unknown action, or `400` when `restart` is asked for an agent whose working directory is gone |
@@ -199,14 +203,29 @@ then submits it (a short delay first, longer for a large paste, so the CLI's TUI
 can ingest it). Exceptions:
 
 - `409 { error, queued: true, message }` — a **human** holds control and the
-  sender is not `human`. The text is stored in the agent's inbox instead.
+  sender is not `human`. The text is stored in the agent's inbox instead and is
+  never auto-delivered (the human owns that prompt).
 - `409 { error }` — the agent is `paused` and the sender is not `human`.
-- `409 { error }` — the agent has no live terminal.
+- `409 { error }` — an interactive agent has no live terminal.
 - `runtime: "external"` has no terminal to type into, so the message is always
   queued to its inbox and the call returns `200 { ok: true, queued: true, message }`.
   Nothing is delivered anywhere automatically: the registered session picks the
   message up by reading its inbox, and its chat is read back from the transcript
   named by `transcriptRuntime`.
+- a managed **one-shot local model** (DeepSeek) consumed its only prompt, so the
+  message is queued durably (`deliver: true`) and then **dispatched to a fresh run
+  of the same local model**: the run's prompt is the original brief plus the
+  queued messages in id order, and nothing is written to stdin. The call returns
+  `200 { ok: true, queued: true, delivered: boolean, message }`; `deliveryError`
+  carries the reason when the run could not start. A message is marked read only
+  after that run actually starts, so a refused or failed delivery stays in the
+  inbox and is retried on the next send, restart, or one-shot exit. A message to a
+  one-shot agent that has never started waits for its first run
+  (`deliveryReason: "… has not started yet …"`); a live one-shot terminal defers
+  until it exits.
+
+The `delivered` flag is never optimistic: it is set only after `POST /send` has
+successfully started the run that consumed the queue.
 
 A child that sets its status to `blocked` also posts `BLOCKED: <note>` to its
 parent's inbox.
@@ -216,7 +235,7 @@ parent's inbox.
 | Action | Effect |
 |---|---|
 | `stop` | Kills the pty and the process tree; status goes `stopping` then `stopped`. |
-| `restart` | Kills anything running, then respawns. Runtimes with `resumeArgs` and a known `sessionId` resume that session; one-shot workers start over. |
+| `restart` | Kills anything running, then respawns. Runtimes with `resumeArgs` and a known `sessionId` resume that session; one-shot workers start over. Any unread queued input (`deliver: true`) is folded into the new run's prompt and acknowledged only after it starts; if that run cannot start the restart fails `409` and the messages stay queued. |
 | `interrupt` | Sends `ESC` to the terminal (cancels the current turn in a TUI CLI). |
 | `pause` | Sends `ESC` and marks the agent `paused`; the server then refuses parent `send`. There is no `SIGSTOP` on Windows, so the process is not frozen. |
 | `resume` | Clears `paused` (back to `running` if the pty is alive, else `stopped`). |
