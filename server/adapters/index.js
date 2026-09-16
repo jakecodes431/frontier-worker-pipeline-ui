@@ -8,6 +8,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { config, expandHome, expandValue, protocolTemplate, CR_BIN, BRIEFS_DIR } from '../config.js';
 import { readClaudeTranscript, claudeTranscriptPath, findDshSession, readDshSession } from '../usage.js';
+import { locateCodexSession, readCodexTranscript } from '../codex-usage.js';
 
 function fill(template, vars) {
   return template.replace(/\{(\w+)\}/g, (whole, k) => (k in vars ? (vars[k] ?? '') : whole));
@@ -38,13 +39,20 @@ function buildArgs(templates, vars) {
   return out;
 }
 
-function baseEnv(agent, port) {
+function baseEnv(agent, port, rt = {}) {
   const env = { ...process.env };
   // The control room may itself have been started from inside a Claude Code session. A child `claude`
   // that inherits those markers treats itself as a nested child and turns transcript saving off,
   // which would blind usage and chat. Strip them and force persistence.
   for (const k of Object.keys(env)) if (/^(CLAUDE_CODE_|CLAUDECODE)/i.test(k)) delete env[k];
-  env.CLAUDE_CODE_FORCE_SESSION_PERSISTENCE = '1';
+  // Preserve CODEX_HOME and CLI authentication/configuration, but detach desktop
+  // IPC, inherited session identity and the enclosing process's permission flags.
+  for (const k of Object.keys(env)) if (/^CODEX_(THREAD_ID|SESSION_ID|TURN_ID|INTERNAL_ORIGINATOR_OVERRIDE|MANAGED_BY_|SANDBOX|APP_|PERMISSION_PROFILE|CI$|SAGE_|SHELL$)/i.test(k)) delete env[k];
+  const keep = new Set((rt.keepEnv || []).map(k => k.toUpperCase()));
+  const scrub = (rt.scrubEnvContaining || []).map(k => k.toUpperCase());
+  for (const k of Object.keys(env)) if (scrub.some(s => k.toUpperCase().includes(s)) && !keep.has(k.toUpperCase())) delete env[k];
+  for (const [k, v] of Object.entries(rt.env || {})) env[k] = expandValue(v);
+  if (agent.runtime === 'claude') env.CLAUDE_CODE_FORCE_SESSION_PERSISTENCE = '1';
   env.CR_AGENT_ID = agent.id;
   env.CR_URL = `http://127.0.0.1:${port}`;
   env.CR_BIN = CR_BIN;
@@ -83,7 +91,7 @@ export const adapters = {
         prompt: agent.prompt,
       };
       const args = buildArgs(resume ? rt.resumeArgs : rt.args, vars);
-      return { command: rt.command, args, env: baseEnv(agent, port) };
+      return { command: rt.command, args, env: baseEnv(agent, port, rt) };
     },
     transcript(agent) { return claudeTranscriptPath(agent.cwd, agent.sessionId); },
     usage(agent) { return readClaudeTranscript(this.transcript(agent)); },
@@ -92,6 +100,26 @@ export const adapters = {
       const msgs = readClaudeTranscript(this.transcript(agent), { withMessages: true }).messages.filter(m => m.role === 'assistant');
       return msgs.length ? msgs[msgs.length - 1].text : null;
     },
+  },
+
+  codex: {
+    oneShot: false,
+    build(agent, port, { resume = false } = {}) {
+      const rt = config.runtimes.codex;
+      const d = rt.defaults || {};
+      if (resume && !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(agent.sessionId || '')) throw Object.assign(new Error('Codex resume requires the saved session UUID.'), { code: 400 });
+      const effort = agent.effort || d.effort;
+      const permissionMode = agent.permissionMode || d.permissionMode;
+      if (permissionMode && !['read-only', 'workspace-write', 'danger-full-access'].includes(permissionMode)) throw Object.assign(new Error('Codex permissionMode must be read-only, workspace-write, or danger-full-access.'), { code: 400 });
+      if (effort && !['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'].includes(effort)) throw Object.assign(new Error('Unsupported Codex reasoning effort.'), { code: 400 });
+      const vars = { model: agent.model || d.model, permissionMode, sessionId: agent.sessionId, prompt: agent.prompt, reasoningConfig: effort ? `model_reasoning_effort=${JSON.stringify(effort)}` : null };
+      return { command: rt.command, args: buildArgs(resume ? rt.resumeArgs : rt.args, vars), env: baseEnv(agent, port, rt) };
+    },
+    locate: locateCodexSession,
+    transcript(agent) { return this.locate(agent)?.file || null; },
+    usage(agent) { const file = this.transcript(agent); return file ? readCodexTranscript(file) : null; },
+    chat(agent) { const file = this.transcript(agent); return file ? readCodexTranscript(file, { withMessages: true }).messages : []; },
+    result(agent) { const file = this.transcript(agent); if (!file) return null; const r = readCodexTranscript(file, { withMessages: true }); return r.final || r.messages.filter(m => m.role === 'assistant').at(-1)?.text || null; },
   },
 
   deepseek: {
@@ -121,14 +149,7 @@ export const adapters = {
       }
       const vars = { prompt: agent.prompt, model: agent.model || rt.defaults?.model };
       const args = buildArgs(rt.args, vars);
-      const env = baseEnv(agent, port);
-      const scrub = rt.scrubEnvContaining || [];
-      const keep = new Set((rt.keepEnv || []).map(k => k.toUpperCase()));
-      for (const k of Object.keys(env)) {
-        const up = k.toUpperCase();
-        if (scrub.some(s => up.includes(s)) && !keep.has(up)) delete env[k];
-      }
-      for (const [k, v] of Object.entries(rt.env || {})) env[k] = expandValue(v);
+      const env = baseEnv(agent, port, rt);
       return { command: rt.command, args, env };
     },
     locate(agent) {
@@ -165,13 +186,14 @@ export const adapters = {
     // sessionId is either a Claude session uuid (transcript under ~/.claude/projects/<cwd-slug>/) or an
     // absolute path to a transcript .jsonl (e.g. an in-app subagent's output file).
     transcript(agent) {
+      if (agent.transcriptRuntime === 'codex') return adapters.codex.transcript(agent);
       if (!agent.sessionId) return null;
-      if (/^[A-Za-z]:[\/]|^\//.test(agent.sessionId)) return agent.sessionId;
+      if (path.isAbsolute(agent.sessionId)) return agent.sessionId;
       return agent.cwd ? claudeTranscriptPath(agent.cwd, agent.sessionId) : null;
     },
-    usage(agent) { const t = this.transcript(agent); return t ? readClaudeTranscript(t) : null; },
-    chat(agent) { const t = this.transcript(agent); return t ? readClaudeTranscript(t, { withMessages: true }).messages : []; },
-    result(agent) { const t = this.transcript(agent); if (!t) return null; const m = readClaudeTranscript(t, { withMessages: true }).messages.filter(x => x.role === 'assistant'); return m.length ? m[m.length - 1].text : null; },
+    usage(agent) { if (agent.transcriptRuntime === 'codex') return adapters.codex.usage(agent); const t = this.transcript(agent); return t ? readClaudeTranscript(t) : null; },
+    chat(agent) { if (agent.transcriptRuntime === 'codex') return adapters.codex.chat(agent); const t = this.transcript(agent); return t ? readClaudeTranscript(t, { withMessages: true }).messages : []; },
+    result(agent) { if (agent.transcriptRuntime === 'codex') return adapters.codex.result(agent); const t = this.transcript(agent); if (!t) return null; const m = readClaudeTranscript(t, { withMessages: true }).messages.filter(x => x.role === 'assistant'); return m.length ? m[m.length - 1].text : null; },
   },
 };
 

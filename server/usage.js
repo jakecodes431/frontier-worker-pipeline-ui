@@ -11,7 +11,7 @@
  */
 import fs from 'node:fs';
 import path from 'node:path';
-import { config, expandHome, costOf, pricing, resolveModel } from './config.js';
+import { config, expandHome, costOf, priceFor, pricing, resolveModel } from './config.js';
 import { emptyUsage } from './db.js';
 
 export function cwdSlug(cwd) {
@@ -99,13 +99,17 @@ export function readClaudeTranscript(file, { withMessages = false } = {}) {
 
 function finalize(out) {
   let cost = 0, fab = 0;
+  out.usage.unpricedModels = [];
   for (const [model, b] of Object.entries(out.byModel)) {
+    b.pricingKnown = !!priceFor(model);
+    if (!b.pricingKnown) out.usage.unpricedModels.push(model);
     b.totalTokens = b.inputTokens + b.cacheReadTokens + b.cacheWriteTokens + b.outputTokens;
     b.costUsd = costOf(b, model);
     b.fableEquivalentUsd = fable(b);
     cost += b.costUsd; fab += b.fableEquivalentUsd;
   }
   const u = out.usage;
+  u.pricingKnown = u.unpricedModels.length === 0;
   u.totalTokens = u.inputTokens + u.cacheReadTokens + u.cacheWriteTokens + u.outputTokens;
   u.costUsd = cost; u.fableEquivalentUsd = fab;
 }

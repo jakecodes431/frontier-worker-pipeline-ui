@@ -46,7 +46,14 @@
       },
       "_defaultsNote": "model and effort are deliberately unset, so every agent uses the CLI's own default model. Pin them here if you want to: \"model\" takes an alias or a full model name, \"effort\" takes low|medium|high|xhigh|max. Run `claude --help` to see what your CLI version accepts.",
       "transcriptRoot": "${CLAUDE_CONFIG_DIR:-~/.claude}/projects",
-      "idleAfterSilenceMs": 20000
+      "idleAfterSilenceMs": 20000,
+      "efforts": [
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max"
+      ]
     },
     "deepseek": {
       "label": "DeepSeek Harness (headless)",
@@ -81,9 +88,49 @@
     "external": {
       "label": "External session (not spawned by the control room)",
       "defaults": {}
+    },
+    "codex": {
+      "label": "Codex CLI (ChatGPT)",
+      "command": "codex",
+      "args": [
+        "--no-alt-screen",
+        "--model",
+        "{model}",
+        "--sandbox",
+        "{permissionMode}",
+        "-c",
+        "{reasoningConfig}",
+        "{prompt}"
+      ],
+      "resumeArgs": [
+        "resume",
+        "{sessionId}",
+        "--no-alt-screen",
+        "--model",
+        "{model}",
+        "--sandbox",
+        "{permissionMode}",
+        "-c",
+        "{reasoningConfig}"
+      ],
+      "defaults": {
+        "permissionMode": "workspace-write"
+      },
+      "efforts": [
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max",
+        "ultra"
+      ],
+      "transcriptRoot": "${CODEX_HOME:-~/.codex}/sessions",
+      "idleAfterSilenceMs": 20000,
+      "_note": "Run codex once to sign in using your existing ChatGPT plan or supported CLI credentials. No model or effort is forced: CLI configuration applies. Model-specific effort availability is enforced by the CLI. New sessions receive a CLI-generated ID discovered from their local rollout; restarts resume that ID. Sandbox mode does not bypass approval prompts."
     }
   },
   "briefArgvLimit": 6000,
   "worktreeDir": ".worktrees",
-  "worktreeBranchPrefix": "cr/"
+  "worktreeBranchPrefix": "cr/",
+  "frontierRuntime": "codex"
 }
