@@ -204,7 +204,7 @@ try {
   check('UI ships the offline banner and skip link', html.includes('id="netbar"') && html.includes('skip-link'));
   check('xterm vendor served', (await fetch(`${base}/vendor/xterm/xterm.js`)).ok);
   const assets = ['app.js', 'styles.css', 'mock.js', 'lib/api.js', 'lib/dom.js', 'lib/format.js', 'lib/store.js', 'lib/ws.js',
-    'lib/contextmenu.js', 'lib/stop.js',
+    'lib/contextmenu.js', 'lib/stop.js', 'lib/remove.js',
     'views/dashboard.js', 'views/hierarchy.js', 'views/panel.js', 'views/newagent.js', 'views/cto.js',
     'views/tabs/chat.js', 'views/tabs/terminal.js', 'views/tabs/diff.js', 'views/tabs/files.js', 'views/tabs/logs.js'];
   const missingAssets = [];

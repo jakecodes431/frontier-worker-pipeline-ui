@@ -19,7 +19,8 @@ import * as f from '../lib/format.js';
 import api from '../lib/api.js';
 import { openAgentMenu } from '../lib/contextmenu.js';
 import { requestStop } from '../lib/stop.js';
-import { store, getAgent, getAgents, getSelectedId, select, upsertAgent, treeOrder, isLoaded, getConfig } from '../lib/store.js';
+import { requestRemove } from '../lib/remove.js';
+import { store, getAgent, getAgents, getSelectedId, select, upsertAgent, removeAgent, treeOrder, isLoaded, getConfig } from '../lib/store.js';
 
 export const FINISHED = new Set(['done', 'failed', 'stopped']);
 const LS_FOLDER = 'cr.hierarchy.finishedOpen';
@@ -180,9 +181,13 @@ function openAgentContextMenu(ev, id) {
   openAgentMenu({ x, y, anchor, agent, onSelect: runAgentAction });
 }
 
-/** Run a menu action. Only Stop exists today; it talks to the lifecycle API. */
+/** Run a menu action. Stop and Remove both talk to the existing lifecycle API. */
 async function runAgentAction(action, agent) {
-  if (action !== 'stop') return;
+  if (action === 'stop') await runStop(agent);
+  else if (action === 'remove') await runRemove(agent);
+}
+
+async function runStop(agent) {
   const label = agent.name || agent.id;
   const result = await requestStop(agent, {
     action: (id, name) => api.action(id, name),
@@ -204,6 +209,48 @@ async function runAgentAction(action, agent) {
   if (result.ok) toast(`Stopped "${label}".`, 'ok');
   else if (result.disabled) toast(result.reason, 'error', 7000);
   // A failed stop already reported itself from onSettled; a cancelled one is silent.
+}
+
+async function runRemove(agent) {
+  const label = agent.name || agent.id;
+  const result = await requestRemove(agent, {
+    // The server's own DELETE is the only removal path: it 409s while a live
+    // terminal owns the record and re-parents the children on success. Nothing
+    // is painted removed here before the server confirms the request.
+    action: (id) => api.deleteAgent(id),
+    confirm: (message) => window.confirm(message),
+    onSettled: (target, err) => {
+      if (err) {
+        // Report the server's own message and leave the row exactly as it was:
+        // no local state may pretend the agent is gone after a refusal.
+        toast(`Remove failed: ${err.message}`, 'error', 7000);
+        return;
+      }
+      forgetAgent(target.id);
+    },
+  });
+  if (result.ok) toast(`Removed "${label}" from the board.`, 'ok');
+  else if (result.disabled) toast(result.reason, 'error', 7000);
+  // A refused removal already reported itself from onSettled; a cancelled one is silent.
+}
+
+/**
+ * Drop a removed agent from the local view in the same interaction. The server
+ * also pushes state, but the row, the open panel/chat and any selection or
+ * focus pointing at the record must not wait for that frame.
+ */
+function forgetAgent(id) {
+  const wasSelected = getSelectedId() === id;
+  const index = items().findIndex((el) => el.dataset.id === id);
+  if (rovingId === id) rovingId = null;
+  // Close the panel first: its own "agent is gone" notice would otherwise double
+  // the removal toast the caller already showed.
+  if (wasSelected) select(null);
+  removeAgent(id);
+  const list = items();
+  if (!list.length) return;
+  // Park focus on the row that took the removed one's place, never on the gap.
+  focusItem(list[Math.min(index < 0 ? 0 : index, list.length - 1)]);
 }
 
 function setMode(next, force) {
@@ -283,7 +330,7 @@ function buildList() {
     h('div', { class: 'plate-head' },
       h('h2', { class: 'plate-title' }, 'Active'),
       activeCount,
-      h('span', { class: 'plate-note' }, 'queued, running, idle, paused and blocked, under their parents · right-click an agent to stop it')),
+      h('span', { class: 'plate-note' }, 'queued, running, idle, paused and blocked, under their parents · right-click an agent to stop or remove it')),
     h('div', { class: 'tree-cols', 'aria-hidden': 'true' },
       h('span', null, 'Agent'), h('span', null, 'Status'), h('span', null, 'Task'),
       h('span', null, 'Elapsed'), h('span', null, 'Tokens'), h('span', null, 'Cost')),

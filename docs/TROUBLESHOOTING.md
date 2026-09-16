@@ -145,8 +145,10 @@ Rows with a missing working directory carry an amber `!`; the drawer says
 
 This is normal after `git worktree remove` or a manual cleanup. The agent's
 transcript, events and terminal scrollback are still readable. Remove the record
-with **Extra → Remove from tree** when you are done with it; that leaves the
-branch and the transcript alone.
+with **Extra → Remove from tree**, or by right-clicking the row and choosing
+**Remove from board**, when you are done with it; both leave the branch and the
+transcript alone, and any children are re-parented rather than removed. A live
+agent must be stopped first — the menu says so and disables Remove until it is.
 
 ---
 

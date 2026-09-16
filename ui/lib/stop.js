@@ -6,10 +6,14 @@
 // hierarchy wires both to the existing lifecycle endpoint:
 //   POST /api/agents/:id/action { action: "stop" }
 //
+// This module also owns `agentMenuItems`, the menu's single item list, which
+// puts Stop beside the Remove action defined in ui/lib/remove.js.
+//
 // Nothing here invents a second stop path. A failure is returned, never
 // swallowed: the caller keeps the previous state and surfaces the error.
 
 import { agentIsLive } from '../views/newagent.js';
+import { removeAvailability } from './remove.js';
 
 const TERMINAL = new Set(['done', 'failed', 'stopped']);
 
@@ -51,17 +55,32 @@ export function stopConfirmation(agent = {}) {
   return `Stop "${name}"?\n\nThe agent is marked stopped. Nothing is running right now.`;
 }
 
-/** The context-menu items for one agent. Today that is the Stop action alone. */
+/**
+ * The context-menu items for one agent: Stop first, then Remove beside it. Both
+ * are destructive and both carry the honest reason when they are disabled, so
+ * the menu never offers an action the server would refuse without saying why.
+ */
 export function agentMenuItems(agent = {}) {
   const stop = stopAvailability(agent);
-  return [{
-    id: 'stop',
-    action: 'stop',
-    label: 'Stop agent',
-    danger: true,
-    disabled: stop.disabled,
-    reason: stop.reason,
-  }];
+  const remove = removeAvailability(agent);
+  return [
+    {
+      id: 'stop',
+      action: 'stop',
+      label: 'Stop agent',
+      danger: true,
+      disabled: stop.disabled,
+      reason: stop.reason,
+    },
+    {
+      id: 'remove',
+      action: 'remove',
+      label: 'Remove from board',
+      danger: true,
+      disabled: remove.disabled,
+      reason: remove.reason,
+    },
+  ];
 }
 
 /**

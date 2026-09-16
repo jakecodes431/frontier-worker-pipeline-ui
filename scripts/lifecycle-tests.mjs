@@ -1,5 +1,10 @@
 // Real HTTP, WebSocket, SQLite and PTY coverage. The CLI fixture is an echo
 // process, not a model: these checks spend no tokens and need no credentials.
+//
+// Child stdout/stderr is redirected into files instead of piped: the harness
+// sandbox denies named-pipe stdio (spawn/execFileSync with the default 'pipe'
+// fails EPERM), and file redirection keeps the contract identical while working
+// both inside and outside the sandbox. Same approach as scripts/history-tests.mjs.
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -13,10 +18,10 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'frontier-lifecycle-'));
 const repo = path.join(scratch, 'repo');
 fs.mkdirSync(repo);
-execFileSync('git', ['init', '-b', 'main', repo], { stdio: 'pipe' });
+execFileSync('git', ['init', '-b', 'main', repo], { stdio: 'ignore' });
 fs.writeFileSync(path.join(repo, 'README.md'), 'fixture\n');
-execFileSync('git', ['-C', repo, 'add', 'README.md']);
-execFileSync('git', ['-C', repo, '-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', 'commit', '-m', 'fixture'], { stdio: 'pipe' });
+execFileSync('git', ['-C', repo, 'add', 'README.md'], { stdio: 'ignore' });
+execFileSync('git', ['-C', repo, '-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', 'commit', '-m', 'fixture'], { stdio: 'ignore' });
 const fixture = path.join(scratch, 'echo.mjs');
 fs.writeFileSync(fixture, `process.stdout.write('TERMINAL_READY\\r\\n'); process.stdin.setEncoding('utf8'); process.stdin.on('data', d => { process.stdout.write('RECEIVED:'+d+'\\r\\n'); if(d.includes('EXIT_FIXTURE')) process.exit(0); });`);
 const port = await new Promise(resolve => { const s = net.createServer(); s.listen(0, '127.0.0.1', () => { const p = s.address().port; s.close(() => resolve(p)); }); });
@@ -24,18 +29,27 @@ const base = `http://127.0.0.1:${port}`;
 const cfg = JSON.parse(fs.readFileSync(path.join(root, 'config/runtimes.json')));
 for (const runtime of ['claude', 'codex']) cfg.runtimes[runtime] = { ...cfg.runtimes[runtime], command: process.execPath, args: [fixture], resumeArgs: [fixture], defaults: {} };
 fs.writeFileSync(path.join(scratch, 'runtimes.json'), JSON.stringify(cfg));
-let child, logs = '', count = 0;
+let child, count = 0;
+const serverLog = path.join(scratch, 'server.log');
+const readLogs = () => { try { return fs.readFileSync(serverLog, 'utf8'); } catch { return ''; } };
 const sockets = [];
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 const env = { ...process.env, CR_PORT: String(port), CR_DATA_DIR: path.join(scratch, 'data'), CR_CONFIG_DIR: scratch };
 async function boot() {
-  child = spawn(process.execPath, [path.join(root, 'server/index.js')], { cwd: root, env, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
-  child.stdout.on('data', b => { logs += b; }); child.stderr.on('data', b => { logs += b; });
-  for (let i = 0; i < 100; i++) { try { if ((await fetch(base + '/api/health')).ok) return; } catch {} if (child.exitCode !== null) throw new Error(logs); await sleep(100); }
-  throw new Error('server boot timed out: ' + logs);
+  const logFd = fs.openSync(serverLog, 'a');
+  child = spawn(process.execPath, [path.join(root, 'server/index.js')], { cwd: root, env, stdio: ['ignore', logFd, logFd], windowsHide: true });
+  child.once('exit', () => { try { fs.closeSync(logFd); } catch { /* already closed */ } });
+  for (let i = 0; i < 100; i++) { try { if ((await fetch(base + '/api/health')).ok) return; } catch {} if (child.exitCode !== null) throw new Error(readLogs()); await sleep(100); }
+  throw new Error('server boot timed out: ' + readLogs());
 }
 async function request(route, body, expected = 200, headers = {}) {
   const r = await fetch(base + route, { method: body === undefined ? 'GET' : 'POST', headers: { 'content-type': 'application/json', ...headers }, body: body === undefined ? undefined : JSON.stringify(body) });
+  const j = await r.json(); assert.equal(r.status, expected, `${route}: ${JSON.stringify(j)}`); return j;
+}
+// The Remove action in the hierarchy's context menu calls exactly this route,
+// so its contract is proved here against the real server.
+async function del(route, expected = 200) {
+  const r = await fetch(base + route, { method: 'DELETE' });
   const j = await r.json(); assert.equal(r.status, expected, `${route}: ${JSON.stringify(j)}`); return j;
 }
 function check(label, fn) { fn(); count++; console.log(`PASS ${label}`); }
@@ -161,12 +175,49 @@ try {
   const evil = new WebSocket(`ws://127.0.0.1:${port}/ws`, { origin: 'https://unrelated.example' });
   const denied = await new Promise(resolve => { evil.once('unexpected-response', (_, r) => { r.resume(); resolve(r.statusCode); }); evil.once('error', () => resolve('error')); evil.once('open', () => { evil.close(); resolve('opened'); }); });
   check('cross-origin WebSocket refused', () => assert.equal(denied, 403));
-  const cli = spawn(process.execPath, [path.join(root, 'bin/cr.js'), 'wait', old.id, 'missing-agent', '--timeout', '1'], { env: { ...env, CR_URL: base }, stdio: 'pipe', windowsHide: true });
+  const cli = spawn(process.execPath, [path.join(root, 'bin/cr.js'), 'wait', old.id, 'missing-agent', '--timeout', '1'], { env: { ...env, CR_URL: base }, stdio: 'ignore', windowsHide: true });
   const code = await new Promise(resolve => cli.on('exit', resolve));
   check('CLI wait refuses partially missing target set', () => assert.equal(code, 1));
   const w1 = await request('/api/agents', { name: 'Same name', task: 'work', role: 'worker', runtime: 'claude', worktree: { repo }, autoStart: false }, 201);
   const w2 = await request('/api/agents', { name: 'Same name', task: 'work', role: 'worker', runtime: 'claude', worktree: { repo }, autoStart: false }, 201);
   check('simultaneous worktree names remain unique', () => assert.notEqual(w1.cwd, w2.cwd));
+
+  // --- Remove: DELETE /api/agents/:id --------------------------------------
+  // A live terminal must refuse the removal with the stop-first message, and a
+  // successful removal must re-parent the children rather than remove them.
+  const rmParent = await request('/api/agents', { name: 'Remove parent', role: 'cto', runtime: 'external', cwd: repo, task: 'remove fixture parent', transcriptRuntime: 'claude' }, 201);
+  const rmChild = await request('/api/agents', { name: 'Remove child', role: 'orchestrator', runtime: 'external', cwd: repo, task: 'remove fixture child', parentId: rmParent.id }, 201);
+  const rmGrand = await request('/api/agents', { name: 'Remove grandchild', role: 'worker', runtime: 'external', cwd: repo, task: 'remove fixture grandchild', parentId: rmChild.id }, 201);
+
+  const rmLive = await request('/api/agents', { name: 'Remove live', role: 'worker', runtime: 'claude', cwd: repo, task: 'live removal fixture' }, 201);
+  await until(async () => (await request(`/api/agents/${rmLive.id}/scrollback`)).data.includes('TERMINAL_READY'));
+  const refusedDelete = await del(`/api/agents/${rmLive.id}`, 409);
+  check('a live terminal refuses removal with the stop-first message', () =>
+    assert.match(refusedDelete.error, /still has a live terminal — stop it first, then remove it/));
+  const liveSurvives = await request(`/api/agents/${rmLive.id}`);
+  check('a refused removal leaves the record in place', () => {
+    assert.equal(liveSurvives.agent.id, rmLive.id);
+    assert.equal(liveSurvives.agent.status, 'running');
+  });
+  await request(`/api/agents/${rmLive.id}/action`, { action: 'stop' });
+  await del(`/api/agents/${rmLive.id}`);
+  check('a stopped agent is removed', () => {});
+  await request(`/api/agents/${rmLive.id}`, undefined, 404);
+  check('a removed agent is really gone', () => {});
+
+  await del(`/api/agents/${rmChild.id}`);
+  check('removing an agent deletes its own record', () => {});
+  const reparented = (await request(`/api/agents/${rmGrand.id}`)).agent;
+  check('removing an agent re-parents its children instead of removing them', () => {
+    assert.equal(reparented.parentId, rmParent.id);
+  });
+  const stateAfterRemove = await request('/api/state');
+  check('the removed record leaves the pushed state and its children stay', () => {
+    assert.ok(!stateAfterRemove.agents.some((a) => a.id === rmChild.id));
+    assert.ok(stateAfterRemove.agents.some((a) => a.id === rmGrand.id));
+  });
+  await del('/api/agents/no-such-agent', 404);
+  check('removing an unknown agent is refused with 404', () => {});
   for (const socket of sockets) socket.close();
   await terminateServer(); await boot();
   const restored = (await request(`/api/agents/${next.id}`)).agent;
