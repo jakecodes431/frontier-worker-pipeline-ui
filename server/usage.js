@@ -18,9 +18,67 @@ export function cwdSlug(cwd) {
   return String(cwd).replace(/[^A-Za-z0-9]/g, '-');
 }
 
-export function claudeTranscriptPath(cwd, sessionId) {
+const SESSION_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * Resolved Claude transcript paths, keyed by agent id. The fallback scan below
+ * is not free, and a session's location does not move, so the answer is kept so
+ * the scan runs once per process per agent — and reruns only when the file it
+ * named has disappeared.
+ */
+const transcriptPathCache = new Map();
+
+/**
+ * Locate a registered Claude session's transcript.
+ *
+ * Normally `~/.claude/projects/<slug(cwd)>/<sessionId>.jsonl`. That slug can
+ * miss: a session started with no project folder is written under a scratch
+ * folder's slug, not the slug of the cwd it is later registered with. When the
+ * slug-derived file is absent and the session id is a UUID, look one directory
+ * level down inside the transcript root. Nothing outside the root is read, and
+ * an id carrying path separators never reaches the scan.
+ *
+ * An absolute session id (an explicit registration choice) is returned as-is.
+ */
+export function claudeTranscriptPath(cwd, sessionId, agentId = null) {
   const root = expandHome(config.runtimes.claude.transcriptRoot);
-  return path.join(root, cwdSlug(cwd), `${sessionId}.jsonl`);
+  if (sessionId && path.isAbsolute(sessionId)) return sessionId;
+  const id = String(sessionId ?? '');
+  // A relative id with a separator is not a session id: refuse it rather than
+  // build a path that could leave the transcript root.
+  if (/[\\/]/.test(id)) return null;
+  const cached = agentId ? transcriptPathCache.get(agentId) : null;
+  if (cached && fs.existsSync(cached)) return cached;
+  const direct = path.join(root, cwdSlug(cwd), `${id}.jsonl`);
+  if (fs.existsSync(direct)) {
+    if (agentId) transcriptPathCache.set(agentId, direct);
+    return direct;
+  }
+  const found = SESSION_UUID.test(id) ? findClaudeTranscript(root, id) : null;
+  if (agentId) {
+    if (found) transcriptPathCache.set(agentId, found);
+    else transcriptPathCache.delete(agentId);
+  }
+  return found || direct;
+}
+
+/**
+ * First `<transcriptRoot>/<one folder>/<sessionId>.jsonl`, or null. One level
+ * only: the entry names come straight from readdir, so a candidate cannot
+ * escape the root, and a symlinked folder is skipped because it is not itself a
+ * directory.
+ */
+function findClaudeTranscript(root, sessionId) {
+  const name = `${sessionId}.jsonl`;
+  let entries;
+  try { entries = fs.readdirSync(root, { withFileTypes: true }); } catch { return null; }
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue;
+    const candidate = path.join(root, entry.name, name);
+    let st; try { st = fs.statSync(candidate); } catch { continue; }
+    if (st.isFile()) return candidate;
+  }
+  return null;
 }
 
 function fable(u) {

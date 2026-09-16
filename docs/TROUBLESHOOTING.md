@@ -235,6 +235,28 @@ means "0% used":
 
 ---
 
+## An external node shows 0 tokens
+
+An external registration reads usage from `~/.claude/projects/<slug(cwd)>/<sessionId>.jsonl`.
+If the session was started with no project folder — a scratch or desktop session,
+for example — Claude writes its transcript under a scratch workspace slug instead,
+and the node sits at 0 tokens / $0.00 while its children are metered normally.
+
+The reader now falls back to `<transcriptRoot>/*/<sessionId>.jsonl` (one directory
+level, nothing outside the root) whenever the slug-derived file is missing and the
+session id is a UUID, so the registration meters correctly without one. If it still
+reads zero, confirm the transcript really exists:
+
+```powershell
+Get-ChildItem "$env:USERPROFILE\.claude\projects" -Recurse -Filter "<session-id>.jsonl"
+```
+
+The scan runs once per agent per process; a resolved path is reused until that file
+disappears. A registration whose `--session` is an absolute transcript path is
+unchanged, and a session id containing a path separator is not scanned.
+
+---
+
 ## Spend numbers look wrong
 
 - All displayed costs are price-sheet estimates from recorded tokens, not

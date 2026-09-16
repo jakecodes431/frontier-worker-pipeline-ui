@@ -510,6 +510,10 @@ node bin/cr.js register --name "CTO" --role cto --provider codex \
 - `--session` takes the real session id **or** an absolute path to a transcript
   file. Never invent one; the value has to be something the provider really
   wrote.
+- If a Claude session id has no transcript under the slug of `--cwd`, the reader
+  also checks one level under `~/.claude/projects/*/<session-id>.jsonl`, so a
+  session started without a project folder (Claude writes it under a scratch
+  workspace slug) is still found and metered.
 
 ### Spawning a native CTO or orchestrator
 

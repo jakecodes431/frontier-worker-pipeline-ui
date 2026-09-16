@@ -99,7 +99,7 @@ export const adapters = {
       args.push('--settings', JSON.stringify(claudeStatuslineSettings()));
       return { command: rt.command, args, env: baseEnv(agent, port, rt) };
     },
-    transcript(agent) { return claudeTranscriptPath(agent.cwd, agent.sessionId); },
+    transcript(agent) { return claudeTranscriptPath(agent.cwd, agent.sessionId, agent.id); },
     usage(agent) { return readClaudeTranscript(this.transcript(agent)); },
     chat(agent) { return readClaudeTranscript(this.transcript(agent), { withMessages: true }).messages; },
     result(agent) {
@@ -199,7 +199,7 @@ export const adapters = {
       if (agent.transcriptRuntime === 'codex') return adapters.codex.transcript(agent);
       if (!agent.sessionId) return null;
       if (path.isAbsolute(agent.sessionId)) return agent.sessionId;
-      return agent.cwd ? claudeTranscriptPath(agent.cwd, agent.sessionId) : null;
+      return agent.cwd ? claudeTranscriptPath(agent.cwd, agent.sessionId, agent.id) : null;
     },
     usage(agent) { if (agent.transcriptRuntime === 'codex') return adapters.codex.usage(agent); const t = this.transcript(agent); return t ? readClaudeTranscript(t) : null; },
     chat(agent) { if (agent.transcriptRuntime === 'codex') return adapters.codex.chat(agent); const t = this.transcript(agent); return t ? readClaudeTranscript(t, { withMessages: true }).messages : []; },

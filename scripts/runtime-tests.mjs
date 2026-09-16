@@ -14,7 +14,7 @@ try {
   const { config } = await import('../server/config.js');
   const { adapters } = await import('../server/adapters/index.js');
   const { readCodexTranscript, locateCodexSession } = await import('../server/codex-usage.js');
-  const { readClaudeTranscript, readDshSession } = await import('../server/usage.js');
+  const { readClaudeTranscript, readDshSession, claudeTranscriptPath, cwdSlug } = await import('../server/usage.js');
   db = (await import('../server/db.js')).default;
   const root = path.join(scratch, 'sessions'); fs.mkdirSync(root);
   config.runtimes.codex.transcriptRoot = root;
@@ -133,6 +133,49 @@ try {
     const df = path.join(scratch, 'dsh.json'); fs.writeFileSync(df, JSON.stringify({ record: { rows: { tokenUsage: { val: { totals: { uncachedInputTokens: 10, outputTokens: 2 } } } } } }));
     assert.equal(readDshSession(df, 'unknown-fixture').usage.pricingKnown, false);
     assert.equal(readDshSession(df, 'deepseek-flash').usage.pricingKnown, true);
+  });
+  test('a Claude transcript is found under another slug when the cwd slug misses', () => {
+    // Repro of the measured defect (2026-09-16): an external Claude session was
+    // registered with cwd control-room but written under a scratch workspace
+    // slug, so the slug-derived path missed and the node read 0 tokens forever.
+    const claudeRoot = path.join(scratch, 'claude-projects'); fs.mkdirSync(claudeRoot);
+    config.runtimes.claude.transcriptRoot = claudeRoot;
+    const cwd = path.join(scratch, 'registered-cwd'); fs.mkdirSync(cwd);
+    const sessionId = '55801cdc-068d-4d48-a2bf-90fa889ec1e1';
+    const elsewhere = path.join(claudeRoot, 'C--Users-scratch-2026-09-16-970a5f');
+    fs.mkdirSync(elsewhere);
+    const transcript = path.join(elsewhere, `${sessionId}.jsonl`);
+    write(transcript, [
+      { type: 'assistant', message: { id: 'm1', model: 'claude-opus-5', usage: { input_tokens: 1200, cache_read_input_tokens: 300, cache_creation_input_tokens: 40, output_tokens: 45 } } },
+    ]);
+    const external = { id: 'fallback-agent', runtime: 'external', transcriptRuntime: 'claude', cwd, sessionId };
+    assert.equal(adapters.external.transcript(external), transcript, 'the cwd slug misses, so the scan finds the scratch slug');
+    assert.equal(claudeTranscriptPath(cwd, sessionId, 'fallback-agent'), transcript);
+    const u = adapters.external.usage(external).usage;
+    assert.equal(u.inputTokens, 1200); assert.equal(u.cacheReadTokens, 300);
+    assert.equal(u.cacheWriteTokens, 40); assert.equal(u.outputTokens, 45); assert.equal(u.totalTokens, 1585);
+    assert.ok(u.costUsd > 0, 'the located transcript is priced normally');
+    // The resolution is cached per agent: a later scan cannot displace it.
+    const decoy = path.join(claudeRoot, 'aaa-first-alphabetically'); fs.mkdirSync(decoy);
+    fs.writeFileSync(path.join(decoy, `${sessionId}.jsonl`), '');
+    assert.equal(claudeTranscriptPath(cwd, sessionId, 'fallback-agent'), transcript, 'a cached path is reused without a new scan');
+    // An absolute session id is an explicit registration and is returned as-is.
+    assert.equal(adapters.external.transcript({ ...external, sessionId: transcript }), transcript);
+    assert.equal(claudeTranscriptPath(cwd, transcript), transcript);
+    // A relative id with a path separator never enters the scan, or builds an escaping path.
+    assert.equal(claudeTranscriptPath(cwd, path.join('..', '..', `${sessionId}.jsonl`), 'traversal-agent'), null);
+  });
+  test('a Claude transcript missing everywhere stays a miss with zero usage', () => {
+    const claudeRoot = path.join(scratch, 'claude-projects');
+    config.runtimes.claude.transcriptRoot = claudeRoot;
+    const cwd = path.join(scratch, 'registered-cwd');
+    const sessionId = '00000000-0000-4000-8000-000000000000';
+    const expected = path.join(claudeRoot, cwdSlug(cwd), `${sessionId}.jsonl`);
+    assert.equal(claudeTranscriptPath(cwd, sessionId, 'missing-agent'), expected);
+    const r = adapters.external.usage({ id: 'missing-agent', runtime: 'external', transcriptRuntime: 'claude', cwd, sessionId });
+    assert.equal(r.usage.totalTokens, 0);
+    assert.equal(r.usage.costUsd, 0);
+    assert.equal(readClaudeTranscript(expected).usage.totalTokens, 0);
   });
 } finally {
   db?.close(); fs.rmSync(scratch, { recursive: true, force: true });
