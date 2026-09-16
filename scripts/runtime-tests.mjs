@@ -11,8 +11,8 @@ let passed = 0, db;
 function test(name, fn) { fn(); passed++; console.log(`ok ${passed} - ${name}`); }
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 try {
-  const { config } = await import('../server/config.js');
-  const { adapters } = await import('../server/adapters/index.js');
+  const { config, BRIEFS_DIR } = await import('../server/config.js');
+  const { adapters, stageBrief } = await import('../server/adapters/index.js');
   const { readCodexTranscript, locateCodexSession } = await import('../server/codex-usage.js');
   const { readClaudeTranscript, readDshSession, claudeTranscriptPath, cwdSlug } = await import('../server/usage.js');
   db = (await import('../server/db.js')).default;
@@ -82,6 +82,24 @@ try {
     assert.ok(b.args.includes('features.current_time_reminder.enabled=false'));
     assert.deepEqual(b.args.slice(b.args.indexOf('--sandbox'), b.args.indexOf('--sandbox') + 2), ['--sandbox', 'workspace-write']);
     assert.ok(b.args.includes(agent.prompt));
+  });
+  test('managed Claude sessions may read the staged brief without a permission prompt', () => {
+    const claudeAgent = { ...agent, id: 'claude-fixture', runtime: 'claude', sessionId: '33333333-3333-4333-8333-333333333333' };
+    const { briefPath } = stageBrief(claudeAgent, '# Brief\n\nbody');
+    assert.equal(path.dirname(briefPath), BRIEFS_DIR); // the staged brief is outside the agent's cwd
+    for (const resume of [false, true]) {
+      const b = adapters.claude.build(claudeAgent, 4800, { resume });
+      const i = b.args.indexOf('--add-dir');
+      assert.notEqual(i, -1, `--add-dir missing from ${resume ? 'resume' : 'launch'} argv`);
+      assert.equal(b.args[i + 1], BRIEFS_DIR.replace(/\\/g, '/'));
+      assert.notEqual(b.args[i + 1], claudeAgent.cwd); // the briefs dir is not the cwd
+    }
+    assert.ok(!adapters.codex.build(agent, 4800).args.includes('--add-dir'));
+    const dshArgs = config.runtimes.deepseek.args;
+    config.runtimes.deepseek.args = [file, '{prompt}']; // any existing script: only the argv is inspected
+    try {
+      assert.ok(!adapters.deepseek.build({ ...agent, runtime: 'deepseek' }, 4800).args.includes('--add-dir'));
+    } finally { config.runtimes.deepseek.args = dshArgs; }
   });
   test('resume selects the exact UUID and forwards explicit model/effort', () => {
     const b = adapters.codex.build({ ...agent, sessionId: id, model: 'gpt-fixture', effort: 'high', permissionMode: 'read-only' }, 4800, { resume: true });

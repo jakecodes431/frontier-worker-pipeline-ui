@@ -77,6 +77,34 @@ mean silently granting file access on your behalf.
 
 ---
 
+## A managed Claude session asks permission to read its brief
+
+A spawned Claude agent goes `running` and then its **Terminal** tab shows a
+permission prompt for the staged brief, something like:
+
+```
+Read(C:\...\data\briefs\<agent-id>.md)
+Do you want to proceed?  1. Yes  2. Yes, allow reading from .../data/briefs
+3. No
+```
+
+An unattended orchestrator waits on that question forever and reports nothing.
+
+The server writes every brief to `<dataDir>/briefs/<agent-id>.md`, which is
+outside the agent's working directory. Claude Code asks before reading outside
+its working set even in `acceptEdits` mode. Managed Claude spawns therefore pass
+`--add-dir <dataDir>/briefs` (`claude --help`: *Additional directories to allow
+tool access to*), so the briefs directory is part of the session's allowed set
+and the brief is readable without a prompt.
+
+There is nothing to configure: the Claude adapter (`server/adapters/index.js`)
+adds the flag on both launch and resume, so a per-machine copy of
+`config/runtimes.json` cannot silently drop it. If you still see the prompt, the
+running server predates this fix — restart it. Nothing else is affected: the
+flag is Claude-only, and DeepSeek and external agents are unchanged.
+
+---
+
 ## No DeepSeek harness installed
 
 Creating a `deepseek` worker fails immediately with:

@@ -69,7 +69,11 @@ function protocolFor(agent) {
   return fill(protocolTemplate, { id: agent.id, role: agent.role, parentId: agent.parentId || 'none (top level)', crBin: CR_BIN });
 }
 
-/** Write the full brief (protocol + task + brief text) to a file and return { prompt, briefPath }. */
+/**
+ * Write the full brief (protocol + task + brief text) to a file and return
+ * { prompt, briefPath }. The path is outside the agent's cwd, so the Claude
+ * adapter passes this directory to the CLI with --add-dir (see below).
+ */
 export function stageBrief(agent, brief) {
   const full = `${protocolFor(agent)}# Task\n\n${agent.task}\n\n${brief || ''}`.trim() + '\n';
   const briefPath = path.join(BRIEFS_DIR, `${agent.id}.md`);
@@ -96,6 +100,14 @@ export const adapters = {
         prompt: agent.prompt,
       };
       const args = buildArgs(resume ? rt.resumeArgs : rt.args, vars);
+      // The staged brief lives in <dataDir>/briefs, outside the agent's cwd. Claude
+      // Code's permission system asks before reading outside the working set even
+      // in acceptEdits mode, so an unattended orchestrator stalls on its first
+      // action. Add that directory to the session's allowed set (`claude --help`:
+      // "--add-dir <directories...>  Additional directories to allow tool access
+      // to"). Added by the adapter rather than runtimes.json so a per-machine
+      // CR_CONFIG_DIR copy cannot silently drop the flag.
+      args.push('--add-dir', BRIEFS_DIR.replace(/\\/g, '/'));
       args.push('--settings', JSON.stringify(claudeStatuslineSettings()));
       return { command: rt.command, args, env: baseEnv(agent, port, rt) };
     },
