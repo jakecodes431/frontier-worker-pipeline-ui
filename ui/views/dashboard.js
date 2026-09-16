@@ -95,7 +95,7 @@ function signature(u, agents) {
     agents.length, t.total, t.input, t.output, s.today, s.week, s.month,
     c.running, c.blocked, c.done, c.failed, c.stopped, c.idle, c.queued, c.paused, c.total,
     u.currentRun && u.currentRun.startedAt, (u.savings && u.savings.savedUsd), tiers,
-    JSON.stringify(u.limits || {}), u.pricingComplete, JSON.stringify(u.unpricedModels || []), JSON.stringify(u.byTier || {}),
+    JSON.stringify(u.limits || {}), u.pricingComplete, JSON.stringify(u.unpricedModels || []), JSON.stringify(u.unpricedMarkers || []), JSON.stringify(u.byTier || {}),
     JSON.stringify(getConfig()?.pricing || {}),
   ].join('|');
 }
@@ -320,7 +320,16 @@ function spendPlate(u) {
     return p === null ? 'no spend recorded this month' : `${p.toFixed(0)}% of the month to date`;
   };
 
-  return plate(u.pricingComplete === false ? 'Spend · partial estimate' : 'Spend', u.pricingComplete === false ? `Unpriced models excluded: ${(u.unpricedModels || []).join(', ') || 'price unavailable'}` : 'banked on the day it was measured · local calendar days · all tiers combined', [
+  // "Unpriced" is only ever about a real model with no price. Deliberate
+  // placeholders (a CLI's own error marker) are named separately so the
+  // operator can tell "we have no price for this model" from "this is not a
+  // model and was never going to be priced".
+  const markers = (u.unpricedMarkers || []).map((m) => m.id).filter(Boolean);
+  const markerNote = markers.length ? ` · deliberately unpriced markers (not models): ${markers.join(', ')}` : '';
+  const partial = u.pricingComplete === false;
+  return plate(partial ? 'Spend · partial estimate' : 'Spend', partial
+    ? `Unpriced real models excluded: ${(u.unpricedModels || []).join(', ') || 'price unavailable'}${markerNote}`
+    : `banked on the day it was measured · local calendar days · all tiers combined${markerNote}`, [
     panel('w-6', 'Spend today', money(today), {
       sub: sharePct(today),
       viz: meter(month > 0 ? today / month : 0, 'quiet'),

@@ -53,7 +53,7 @@ with a command line on top.
     "inputTokens": 0, "cacheReadTokens": 0, "cacheWriteTokens": 0, "outputTokens": 0,
     "totalTokens": 0,
     "costUsd": 0.0,
-    "pricingKnown": true, "unpricedModels": [],
+    "pricingKnown": true, "unpricedModels": [], "unpricedMarkers": [],
     "limits": null,
     "fableEquivalentUsd": 0.0
   }
@@ -476,4 +476,9 @@ quotas, and may be stale. Missing provider data remains unknown.
 Codex cumulative `token_count` snapshots are not summed across turns. Cached
 input is separated from total input, and reasoning output is not added twice.
 `pricingKnown: false` and `unpricedModels` identify missing price-sheet rows.
+`unpricedMarkers` lists ids that are deliberately never priced because they are
+not models at all (Claude Code writes `<synthetic>` on assistant entries that
+are API error notices). Markers never set `pricingKnown` to `false` and never
+make `/api/usage` report `pricingComplete: false`; each carries its own `id`,
+`reason` and `totalTokens`.
 `CODEX_HOME` defaults to `~/.codex`; session lookup uses its `sessions/` tree.

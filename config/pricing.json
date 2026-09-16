@@ -7,6 +7,8 @@
     "If your frontier sessions run on a subscription rather than per-token API billing, set claudeBilling",
     "to \"plan\": the dollar figures are then API-equivalent estimates of what the same work would have",
     "cost, not money actually charged to you.",
+    "Ids under \"markers\" are deliberately never priced. They are a CLI's own placeholder rather than a",
+    "model (see _markersNote), so they are reported separately and never make the panel look under-priced.",
     "Keys starting with _ are comments and are ignored by the server."
   ],
   "claudeBilling": "plan",
@@ -15,6 +17,7 @@
   "_fableEquivalentModelNote": "The frontier model the savings figure compares against: 'what this work would have cost if the frontier model had done it'. Point it at whichever model you would otherwise have used.",
   "models": {
     "gpt-6-astra": { "input": 10.0, "cacheRead": 1.0, "cacheWrite": 12.5, "output": 50.0, "tier": "codex", "estimated": true, "longContextThreshold": 272000, "longContextInputMultiplier": 2, "longContextOutputMultiplier": 1.5, "source": "https://developers.openai.com/api/docs/models/gpt-6-astra", "verifiedOn": "2026-09-16", "basis": "Standard API equivalent; excludes Fast, Batch and Flex adjustments" },
+    "gpt-reserve": { "input": 0.2, "cacheRead": 0.02, "cacheWrite": 0.25, "output": 1.2, "tier": "codex", "estimated": true, "longContextThreshold": 272000, "longContextInputMultiplier": 2, "longContextOutputMultiplier": 1.5, "source": "https://developers.openai.com/api/docs/models/gpt-5.6-luna", "verifiedOn": "2026-09-16", "basis": "INFERRED, not a published gpt-reserve rate: Codex's separately-metered fallback tier is 'Luna Reserve' and its client groups gpt-reserve with gpt-5.6-luna, so this row uses GPT-5.6 Luna's published rate (input/cached input/output, cache writes at 1.25x input). Verify against your own account before trusting the dollar figure." },
     "claude-fable-5-1": { "input": 15.0, "cacheRead": 1.5, "cacheWrite": 18.75, "output": 75.0, "tier": "fable", "estimated": true },
     "claude-opus-5":    { "input": 5.0,  "cacheRead": 0.5, "cacheWrite": 6.25,  "output": 25.0, "tier": "opus", "estimated": true },
     "claude-sonnet-5":  { "input": 3.0,  "cacheRead": 0.3, "cacheWrite": 3.75,  "output": 15.0, "tier": "sonnet", "estimated": true },
@@ -29,5 +32,14 @@
     "deepseek": "deepseek-flash",
     "deepseek-v4.1-flash": "deepseek-flash"
   },
-  "_aliasesNote": "Short names accepted anywhere a model is given, and used to fold the model ids that appear in CLI transcripts onto one row above. Add your own."
+  "_aliasesNote": "Short names accepted anywhere a model is given, and used to fold the model ids that appear in CLI transcripts onto one row above. Add your own.",
+  "markers": {
+    "<synthetic>": {
+      "label": "Claude Code API-error placeholder",
+      "reason": "Claude Code stamps assistant transcript entries that are API error notices (for example a 429 rate limit) with model \"<synthetic>\". They are not model usage and always carry zero tokens.",
+      "source": "Claude Code transcripts: assistant entry.message.model where entry.isApiErrorMessage is true",
+      "verifiedOn": "2026-09-16"
+    }
+  },
+  "_markersNote": "Ids here are deliberately unpriced placeholders, not models. They are reported under unpricedMarkers (never unpricedModels), never make pricingComplete false, and must never be given a price."
 }

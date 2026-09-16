@@ -11,7 +11,7 @@
  */
 import fs from 'node:fs';
 import path from 'node:path';
-import { config, expandHome, costOf, priceFor, pricing, resolveModel } from './config.js';
+import { config, expandHome, costOf, priceFor, markerFor, pricing, resolveModel } from './config.js';
 import { emptyUsage } from './db.js';
 
 export function cwdSlug(cwd) {
@@ -100,10 +100,20 @@ export function readClaudeTranscript(file, { withMessages = false } = {}) {
 function finalize(out) {
   let cost = 0, fab = 0;
   out.usage.unpricedModels = [];
+  out.usage.unpricedMarkers = [];
   for (const [model, b] of Object.entries(out.byModel)) {
     b.pricingKnown = !!priceFor(model);
-    if (!b.pricingKnown) out.usage.unpricedModels.push(model);
     b.totalTokens = b.inputTokens + b.cacheReadTokens + b.cacheWriteTokens + b.outputTokens;
+    // A deliberate placeholder (see config/pricing.json "markers") is not an
+    // unpriced model: keep the two apart so pricingComplete only ever means
+    // real money is missing. Carried with its token total so a marker that ever
+    // did move tokens is still visible rather than silently forgotten.
+    const marker = b.pricingKnown ? null : markerFor(model);
+    b.deliberateMarker = Boolean(marker);
+    if (!b.pricingKnown) {
+      if (marker) out.usage.unpricedMarkers.push({ ...marker, totalTokens: b.totalTokens });
+      else out.usage.unpricedModels.push(model);
+    }
     b.costUsd = costOf(b, model);
     b.fableEquivalentUsd = fable(b);
     cost += b.costUsd; fab += b.fableEquivalentUsd;

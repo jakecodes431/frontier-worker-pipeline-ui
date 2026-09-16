@@ -616,8 +616,15 @@ saving from delegating to cheap workers.
 - An unknown model is unpriced. Its tokens still count, but a numeric zero in
   an aggregate does not establish that its use was free. The API exposes
   `pricingKnown` and `unpricedModels` so callers can show that distinction.
+- Some ids are deliberately never priced because they are not models: Claude
+  Code stamps `<synthetic>` on assistant entries that are API error notices.
+  Those are listed separately under `unpricedMarkers` (with their own `reason`)
+  and never make `pricingComplete` false. Add your own under `markers` in
+  `config/pricing.json` if another CLI has an equivalent placeholder.
 - Codex has no default price row. Add a verified model rate to
-  `config/pricing.json` if you want a dollar estimate.
+  `config/pricing.json` if you want a dollar estimate. Its undocumented
+  `gpt-reserve` fallback ("Luna Reserve") ships with an explicitly inferred
+  GPT-5.6 Luna-class estimate you should verify before trusting.
 - Codex rollout `rate_limits` may provide an account-level observation of
   usage windows. Missing data is unknown, and even present data may be stale;
   it is not this agent's private allowance. Claude and DeepSeek quota remain

@@ -1,7 +1,7 @@
 /** Local Codex rollout reader. Cumulative token_count snapshots are not invoices. */
 import fs from 'node:fs';
 import path from 'node:path';
-import { config, expandHome, costOf, priceFor, pricing, resolveModel } from './config.js';
+import { config, expandHome, costOf, priceFor, markerFor, pricing, resolveModel } from './config.js';
 
 const zero = () => ({ inputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, outputTokens: 0, totalTokens: 0, costUsd: 0, fableEquivalentUsd: 0 });
 const number = n => Number.isFinite(n) && n >= 0 ? n : 0;
@@ -127,13 +127,21 @@ export function readCodexTranscript(file, { withMessages = false } = {}) {
     }
   }
   out.usage.unpricedModels = [];
+  out.usage.unpricedMarkers = [];
   for (const [model, bucket] of Object.entries(out.byModel)) {
     bucket.totalTokens = tokenKeys.reduce((n, k) => n + bucket[k], 0);
     bucket.pricingKnown = !!priceFor(model);
+    // Deliberate placeholders are reported apart from unpriced models; see the
+    // matching comment in server/usage.js.
+    const marker = bucket.pricingKnown ? null : markerFor(model);
+    bucket.deliberateMarker = Boolean(marker);
+    if (!bucket.pricingKnown) {
+      if (marker) out.usage.unpricedMarkers.push({ ...marker, totalTokens: bucket.totalTokens });
+      else out.usage.unpricedModels.push(model);
+    }
     bucket.fableEquivalentUsd = costOf(bucket, pricing.fableEquivalentModel);
     out.usage.costUsd += bucket.costUsd;
     out.usage.fableEquivalentUsd += bucket.fableEquivalentUsd;
-    if (!bucket.pricingKnown) out.usage.unpricedModels.push(model);
   }
   out.usage.pricingKnown = out.usage.unpricedModels.length === 0;
   out.usage.totalTokens = tokenKeys.reduce((n, k) => n + out.usage[k], 0);

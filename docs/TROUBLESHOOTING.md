@@ -239,6 +239,10 @@ means "0% used":
 - Missing model prices produce `pricingKnown: false` and `unpricedModels`.
   Tokens still count; an aggregate numeric zero is not proof of free use.
   Add a verified rate in `config/pricing.json` to price an unsupported model.
+- `unpricedMarkers` is the opposite case: ids that are deliberately never
+  priced because they are not models (Claude Code's `<synthetic>` error
+  placeholder). They are named there with their own reason instead of making
+  the panel look under-priced. Edit `markers` in `config/pricing.json`.
 - Codex limits, when available, come from the last local rollout observation
   of account-level `rate_limits`. They may be stale. Missing limits are unknown,
   not zero remaining and not unlimited. Claude plan limits appear only after a

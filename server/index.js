@@ -6,7 +6,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { WebSocketServer } from 'ws';
-import { config, ROOT, publicConfig, pricing, localDay } from './config.js';
+import { config, ROOT, publicConfig, pricing, localDay, priceFor, markerFor } from './config.js';
 import { agents, messages, events, usageSamples, emptyUsage } from './db.js';
 import { PtyManager } from './pty.js';
 import { adapters, stageBrief } from './adapters/index.js';
@@ -256,13 +256,16 @@ ptys.on('exit', (id, { exitCode }) => {
 // ----------------------------------------------------------------------------
 // usage / status refresh
 // ----------------------------------------------------------------------------
-function refreshUsage(id) {
+function refreshUsage(id, { reprice = false } = {}) {
   const a = agents.get(id);
   if (!a) return;
   const ad = adapters[a.runtime];
   let r = null;
   try { r = ad?.usage?.(a); } catch (e) { log(id, 'usage-error', String(e.message)); }
   if (!r) return;
+  // Re-reading a finished agent to apply a new price sheet must never erase its
+  // recorded usage because the transcript moved or vanished; keep the snapshot.
+  if (reprice && TERMINAL.has(a.status) && a.usage.totalTokens > 0 && r.usage.totalTokens === 0) return;
   const patch = { usage: r.usage };
   if (r.sessionId && !a.sessionId) patch.sessionId = r.sessionId;
   if (r.model && !a.model) patch.model = r.model;
@@ -278,9 +281,24 @@ function refreshUsage(id) {
   for (const [model, b] of Object.entries(r.byModel || {})) usageSamples.record(id, model, day, b, b.costUsd);
 }
 
+/** Terminal agents already re-read once because the price sheet changed; never loop on them. */
+const repriced = new Set();
+
 function refreshAll() {
   for (const a of agents.all()) {
-    if (a.runtime === 'external' || !TERMINAL.has(a.status) || a.usage.totalTokens === 0) refreshUsage(a.id);
+    // A finished agent is normally not re-read: its transcript is frozen and its
+    // cost is already banked. The exception is a price-sheet edit — if its
+    // stored usage names a model that is unpriced no longer (or is now a
+    // deliberate marker), re-read it once so the Unpriced list and its cost stop
+    // lying. The guard in refreshUsage keeps a missing transcript from wiping
+    // the recorded usage, and `repriced` keeps it to one attempt per process.
+    const stalePrice = TERMINAL.has(a.status)
+      && !repriced.has(a.id)
+      && (a.usage?.unpricedModels || []).some(m => priceFor(m) || markerFor(m));
+    if (a.runtime === 'external' || !TERMINAL.has(a.status) || a.usage.totalTokens === 0 || stalePrice) {
+      if (stalePrice) repriced.add(a.id);
+      refreshUsage(a.id, { reprice: stalePrice });
+    }
     // A process we think is running but which is gone (e.g. server restarted) gets marked stopped.
     if (a.pid && !ptys.has(a.id) && !TERMINAL.has(a.status) && !git.pidAlive(a.pid)) {
       agents.update(a.id, { status: 'stopped', endedAt: nowIso(), pid: null, note: a.note || 'process not running (control room restarted?) — use Restart to resume' });
@@ -315,11 +333,16 @@ function usageSummary() {
   const counts = { total: all.length, active: 0, running: 0, queued: 0, idle: 0, paused: 0, stopping: 0, blocked: 0, done: 0, failed: 0, stopped: 0, unknown: 0 };
   let dsActual = 0, dsFable = 0, runCost = 0, runStart = null;
   const unpricedModels = new Set();
+  // Deliberate placeholders (Claude Code's "<synthetic>") are NOT unpriced
+  // models: they are carried here so the panel can name them without claiming
+  // money is missing for them.
+  const unpricedMarkers = new Map();
   for (const tier of Object.values(tiers)) tier.pricingKnown = true;
   for (const a of all) {
     const u = a.usage || emptyUsage();
     const tier = tierOf(a);
     if (u.pricingKnown === false) { tiers[tier].pricingKnown = false; for (const model of u.unpricedModels || [a.model || 'unknown']) unpricedModels.add(model); }
+    for (const marker of u.unpricedMarkers || []) if (marker?.id) unpricedMarkers.set(marker.id, marker);
     tierAgents[tier] += 1;
     for (const k of USAGE_KEYS) tiers[tier][k] += Number(u[k]) || 0;
     tokens.input += u.inputTokens || 0; tokens.cacheRead += u.cacheReadTokens || 0; tokens.cacheWrite += u.cacheWriteTokens || 0; tokens.output += u.outputTokens || 0;
@@ -354,6 +377,7 @@ function usageSummary() {
     pricing,
     pricingComplete: unpricedModels.size === 0,
     unpricedModels: [...unpricedModels],
+    unpricedMarkers: [...unpricedMarkers.values()],
     generatedAt: nowIso(),
   };
 }

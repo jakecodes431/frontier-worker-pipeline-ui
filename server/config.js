@@ -97,6 +97,21 @@ export function priceFor(model) {
   return pricing.models[m] || null;
 }
 
+/**
+ * A deliberately unpriced NON-model id, from pricing.markers.
+ *
+ * Some CLIs write a placeholder where a model name belongs — Claude Code stamps
+ * "<synthetic>" on assistant transcript entries that are API error notices.
+ * Those are not unpriced models: no money is missing because of them, so they
+ * must be reported apart from unpricedModels and must never be given a price.
+ * Returns { id, label, reason, ... } or null.
+ */
+export function markerFor(model) {
+  const key = resolveModel(model);
+  const marker = pricing.markers?.[key];
+  return marker ? { id: key, ...marker } : null;
+}
+
 /** USD for a usage bucket at a given model's price sheet. */
 export function costOf(usage, model, requestInputTokens = 0) {
   const p = priceFor(model);
