@@ -1,40 +1,21 @@
 // CTO chat — the live CLI session rendered as a conversation.
 //
-// DESIGN PROVENANCE. The layout is Quartzi's agent conversation UI, read from
-// (paths relative to the Quartzi workspace app):
+// The transcript is a merge of two sources on one clock: the parsed CLI
+// transcript and the control room's own message log (reports from child
+// agents). Turns from the same speaker group under one avatar; a tool call is
+// a compact pill rather than a bubble, so it is always visible but never
+// mistaken for something the agent said.
 //
-//   apps/workspace/src/components/shell/hermes/HermesPanel.tsx
-//       `Transcript`        — the bubble rows: one avatar per RUN of turns
-//                             (a spacer keeps the column straight when a face
-//                             is suppressed), the squared-off corner pointing
-//                             at the speaker, max-width 85%, whitespace-pre-wrap
-//                             + break-words, and the "Show earlier (N more)"
-//                             pill above a windowed list.
-//       `TRANSCRIPT_WINDOW` — why the list is windowed at all: sessions of
-//                             hundreds of turns are not rendered whole. Here
-//                             the transcript is additionally capped to the last
-//                             CAP items before windowing (this CTO session runs
-//                             to thousands of lines).
-//       action rows         — a tool call is NOT a bubble: a compact muted pill
-//                             with a wrench, never hidden. Ours is the same pill
-//                             and expands in place on click.
-//       `pending` bubble    — the waiting state stands where the reply will
-//                             land, wearing the agent's face, rather than a
-//                             status bar above the composer.
-//       `Composer`          — the pill-shaped bar with a round send button on
-//                             the right; the field is never disabled, and focus
-//                             returns to it after a pointer send.
-//       `ConversationHeader`— avatar + title + one dim subtitle line, with the
-//                             right-hand control that opens the detail panel.
-//   apps/workspace/src/components/ui/Avatar.tsx — initials when there is no
-//       image, which is the ordinary case and a real treatment.
+// Why it is capped AND windowed: a long-running CTO session runs to thousands
+// of turns, which is far more than anyone scrolls and more than the DOM should
+// hold. Only the newest CAP items are kept in memory at all, and of those only
+// WINDOW rows are in the document; "Show earlier" pages further back in
+// WINDOW_STEP chunks. Keeping both limits means neither a huge history nor a
+// fast-growing live session can make the page janky.
 //
-// Quartzi is a Tailwind build; this repo is plain CSS, so every one of those
-// decisions is re-expressed against the Quartzi tokens already transcribed at
-// the top of ui/styles.css. Departures from Quartzi are deliberate and local:
-// Enter sends / Shift+Enter inserts a newline (Quartzi's composer is a
-// single-line <input>), and control-room reports from child agents render as
-// system cards, which Hermes has no equivalent of.
+// Composer behaviour: Enter sends, Shift+Enter inserts a newline, the field is
+// never disabled (queue rather than block), and focus returns to it after a
+// pointer send.
 
 import { h, replace, clear, toast, setText } from '../lib/dom.js';
 import * as f from '../lib/format.js';
@@ -44,7 +25,7 @@ import { store, getAgents, getAgent, select } from '../lib/store.js';
 const POLL_MS = 5000;
 /** Newest N merged items kept in memory. The session is far longer than this. */
 const CAP = 300;
-/** Rows put in the DOM at once (Quartzi's TRANSCRIPT_WINDOW is 60). */
+/** Rows put in the DOM at once. */
 const WINDOW = 60;
 const WINDOW_STEP = 60;
 
@@ -347,11 +328,10 @@ export function mountCto({ view, badge }) {
     if (item.id && queuedIds.has(item.id)) meta.push('queued to CTO inbox');
     if (item.kind === 'pending') meta.push('sending…');
 
-    // Quartzi's Transcript row is `flex items-end gap-2` with the face OUTSIDE
-    // the bubble and level with its BOTTOM edge. It carries no timestamp, so it
-    // never had to reconcile one with that alignment — a stamp made a sibling of
-    // the bubble inside the same column drags the face down past it. `.cto-line`
-    // is the face-and-bubble pair; the stamp sits under the pair.
+    // The face sits OUTSIDE the bubble, level with its bottom edge, so the
+    // timestamp cannot be a sibling of the bubble in the same column — that
+    // drags the face down past it. `.cto-line` is the face-and-bubble pair and
+    // the timestamp sits under the pair instead.
     const long = String(item.text || '').length > 1400;
     const open = expandedText.has(item.key);
     const bubble = h('div', {
@@ -500,8 +480,9 @@ export function mountCto({ view, badge }) {
 }
 
 /* --------------------------------------------------------------- glyphs -- */
-// Quartzi draws these with lucide-react (Wrench, ArrowUp, MessageSquare); the
-// same three shapes, inlined, because this repo ships no icon library.
+// Three shapes, inlined as paths, because this repo ships no icon library.
+// Sources are the ISC-licensed lucide icon set (Wrench, ArrowUp,
+// MessageSquare).
 
 function svg(children, extra) {
   const el = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
@@ -522,8 +503,8 @@ function svg(children, extra) {
 
 function iconArrowUp() { return svg(['M12 19V5', 'M5 12l7-7 7 7'], '2'); }
 function iconWrench() {
-  // lucide-react `Wrench`, verbatim — the glyph Quartzi's Transcript puts on an
-  // action line. The previous single-path approximation read as a paperclip.
+  // lucide `Wrench`, verbatim. The single-path approximation this replaced
+  // read as a paperclip, which is the wrong idea entirely for a tool call.
   return svg(['M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z']);
 }
 function iconChat() {

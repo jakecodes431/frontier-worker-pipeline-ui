@@ -34,18 +34,18 @@ function openForm() {
     h('option', { value: '' }, '— none (root / CTO) —'),
     ...agents.map((a) => h('option', { value: a.id }, `${a.role || '?'} · ${a.name || a.id}`)));
 
-  const nameIn = h('input', { type: 'text', name: 'name', placeholder: 'quartzi-site orchestrator', required: true });
+  const nameIn = h('input', { type: 'text', name: 'name', placeholder: 'tags orchestrator', required: true });
   const roleSel = h('select', { name: 'role' }, ...ROLES.map((r) => h('option', { value: r }, r)));
   roleSel.value = 'worker';
   const runtimeSel = h('select', { name: 'runtime' }, ...RUNTIMES.map((r) => h('option', { value: r }, r)));
   runtimeSel.value = 'claude';
-  const modelIn = h('input', { type: 'text', name: 'model', placeholder: cfg.defaultModel || 'claude-fable-5-1' });
+  const modelIn = h('input', { type: 'text', name: 'model', placeholder: cfg.defaultModel || 'server default' });
   const effortSel = h('select', { name: 'effort' },
     ...EFFORTS.map((e) => h('option', { value: e }, e || '— default —')));
   const taskIn = h('input', { type: 'text', name: 'task', placeholder: 'one-line task', required: true });
   const cwdIn = h('input', { type: 'text', name: 'cwd', placeholder: cfg.defaultCwd || '/path/to/your/project', required: true });
   const briefIn = h('textarea', { name: 'brief', rows: '5', placeholder: 'Full brief handed to the agent on start (optional).' });
-  const repoIn = h('input', { type: 'text', name: 'repo', placeholder: 'C:/repo (optional)' });
+  const repoIn = h('input', { type: 'text', name: 'repo', placeholder: '/path/to/repo (optional)' });
   const branchIn = h('input', { type: 'text', name: 'branch', placeholder: 'cr/name (optional)' });
   const autoStart = h('input', { type: 'checkbox', name: 'autoStart' });
   autoStart.checked = true;

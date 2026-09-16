@@ -6,10 +6,10 @@
 // Rebuilt wholesale on each `usage` / `agents` event; it holds no live widgets
 // (the terminal and the open drawer live elsewhere, untouched by this).
 //
-// LABELLING IS LOAD-BEARING. Claude/Fable dollars are API-equivalent estimates
-// computed from token counts — those sessions run on Jake's Claude plan and are
-// never invoiced per token. Only DeepSeek figures are real money. Every money
-// panel therefore carries its basis.
+// LABELLING IS LOAD-BEARING. Claude dollars are API-equivalent estimates
+// priced from token counts — those sessions run on a subscription plan and are
+// never billed per token. Only DeepSeek figures are real, metered API spend.
+// Every money panel therefore carries its basis.
 
 import { h, replace } from '../lib/dom.js';
 import * as f from '../lib/format.js';

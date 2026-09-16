@@ -96,7 +96,8 @@ conn.onState((state, attempt) => {
     setText(el.querySelector('.conn-text'), label);
     el.title = title;
   }
-  if (connMeta) setText(connMeta, state === 'open' ? '127.0.0.1:4800' : '');
+  // The origin the page was served from — whatever host and port that is.
+  if (connMeta) setText(connMeta, state === 'open' ? (location.host || location.origin) : '');
 });
 
 conn.on('state', (frame) => {

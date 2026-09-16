@@ -1,32 +1,39 @@
 /* ==========================================================================
-   Control Room — Quartzi brand skin (light).
+   Control Room — theme and component styles (light).
 
-   SOURCE OF TRUTH. Every colour, radius, shadow and the face below come from
-   the quartzi.ai brand, not from the workspace app:
+   This file is the whole design system for this app: the tokens below are the
+   only place a colour, radius, shadow or type face is decided, and every rule
+   further down spends them. If you are adding UI, reach for a token; if the
+   token you want is missing, add it here rather than inlining a value.
 
-     the Quartzi design system (brand-tokens.css)
-         ground #FFFFFF, ground-sunk #F6F5F3, plate #F1EFEB, plate-raised
-         #FFFFFF, rule #E5E3DE, rule-strong #CFCCC4, cave #E7E3DC, cave-2
-         #DCD7CE, cave-rule #CBC5BA, ink #202020, ink-2 #55534F, ink-3 #6B6862,
-         ink-pressed #111111, control-line #92908A, gem #8C5A3C, gem-ink
-         #7A4C31, gem-deep #5F3B26, gem-wash #F3EEE8, lift-1/2/3, radii plate
-         24 / inner 16 / control 8 / chip 999, Inter.
-     the Quartzi design system (plate.css)
-         the component anatomy: .plate (white field, rule-strong edge, 24px,
-         lift), .label (the engraved 11px caps micro-label), .spec rows ruled
-         by hairlines, .stamp (ink primary, 8px, lift-1, hover ink-2, active
-         ink-pressed), .engrave (plate secondary, hover cave-2), .chip (caps
-         state pill with a dot; only the live chip wears the gem), .rail rows,
-         the gem-deep focus ring, --ease cubic-bezier(0.16, 1, 0.3, 1).
+   THE PALETTE is warm neutral stone and ink, with a single muted accent:
 
-   THE ONE-ACCENT RULE (plate.css, "THE GEM ACCENT IS A RATING, NOT A
-   DECORATION"). The gem appears on live/running state and at most one primary
-   action per view. Buttons, tabs and nav selection are ink and neutral stone.
-   The orange this file used to carry (inherited by quartzi/apps/workspace from
-   ServiceFlowPro, per that file's own comment) is gone in every form.
+     grounds and plates   ground #FFFFFF, ground-sunk #F6F5F3, plate #F1EFEB,
+                          plate-raised #FFFFFF
+     rules                rule #E5E3DE, rule-strong #CFCCC4
+     recessed surfaces    cave #E7E3DC, cave-2 #DCD7CE, cave-rule #CBC5BA
+     text and controls    ink #202020, ink-2 #55534F, ink-3 #6B6862,
+                          ink-pressed #111111, control-line #92908A
+     the accent           gem #8C5A3C, gem-ink #7A4C31, gem-deep #5F3B26,
+                          gem-wash #F3EEE8
+     radii                plate 24 / inner 16 / control 8 / chip 999
+     type                 Inter for the interface, JetBrains Mono for anything
+                          the machine wrote (ids, paths, numbers, output)
+
+   THE ONE-ACCENT RULE. The accent is a rating, not a decoration. It appears on
+   live/running state and on at most one primary action per view; everything
+   else — buttons, tabs, nav selection — is ink and neutral stone. A screen with
+   two things shouting has nothing to say.
+
+   THE ANATOMY the rules below build from: .plate (a white field on a
+   rule-strong edge, 24px radius, one soft lift) is the container for every
+   panel; .label is the engraved 11px caps micro-label that names an adjacent
+   value; .spec rows are ruled by hairlines; .btn-primary is ink, .btn-ghost is
+   stone; .chip is the caps state pill with a status dot; the focus ring is
+   gem-deep; motion eases on --ease cubic-bezier(0.16, 1, 0.3, 1).
 
    The semantic trio (done green, blocked amber, failed red) is the only colour
-   outside the brand palette, and it only ever marks a status.
+   outside the palette above, and it only ever marks a status.
    ========================================================================== */
 
 :root {
@@ -138,8 +145,8 @@ button, summary, nav, [role="tab"] { -webkit-user-select: none; user-select: non
 .spacer { margin-left: auto; }
 .tnum   { font-variant-numeric: tabular-nums; }
 
-/* plate.css `.label`: the engraved caps micro-label. It labels an adjacent
-   value; it is never decoration on its own. */
+/* The engraved caps micro-label. It names an adjacent value; it is never
+   decoration on its own. */
 .label, .eyebrow {
   display: block;
   font-size: 11px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase;
@@ -267,7 +274,7 @@ button, summary, nav, [role="tab"] { -webkit-user-select: none; user-select: non
 .page-sub { font-size: 14px; color: var(--ink-2); max-width: 72ch; }
 
 /* ==========================================================================
-   PLATES — plate.css `.plate--raised`: a white field on a rule-strong edge
+   PLATES — a white field on a rule-strong edge, the container for every panel
    ========================================================================== */
 
 .plate {
@@ -384,7 +391,7 @@ button, summary, nav, [role="tab"] { -webkit-user-select: none; user-select: non
 .spec-row > span:first-child { font-size: 10.5px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; color: var(--ink-3); }
 .spec-row > span:last-child { font-size: 13px; color: var(--ink); word-break: break-word; }
 
-/* ---- badges: plate.css `.chip` shape, neutral unless a status earns colour */
+/* ---- badges: the chip shape, neutral unless a status earns colour ------- */
 .badge {
   display: inline-flex; align-items: center; gap: 5px;
   border-radius: var(--r-chip);
@@ -398,7 +405,7 @@ button, summary, nav, [role="tab"] { -webkit-user-select: none; user-select: non
 .badge-actual { background: var(--ok-soft); color: var(--ok-ink); border-color: rgba(8, 116, 84, .28); }
 
 /* ==========================================================================
-   CONTROLS — plate.css `.stamp` (ink) and `.engrave` (stone)
+   CONTROLS — the primary button is ink, the secondary is stone
    ========================================================================== */
 
 .btn {
@@ -481,7 +488,7 @@ select {
   padding-right: 28px;
 }
 
-/* ---- status chip: plate.css `.chip`, compact for dense rows --------------- */
+/* ---- status chip: the chip shape, compact for dense rows ----------------- */
 .chip {
   display: inline-flex; align-items: center; gap: 6px;
   border-radius: var(--r-chip);
@@ -902,7 +909,7 @@ pre.diffstat {
 .st-badge[data-st="D"] { background: var(--bad-soft); color: var(--bad-ink); }
 .st-badge[data-st="?"] { background: var(--plate); color: var(--ink-2); }
 
-/* ---- Logs (plate.css `.rail` rows) ---- */
+/* ---- Logs: hairline-ruled rail rows ---- */
 .logs { padding: 0; }
 .log-row {
   display: grid; grid-template-columns: 64px 92px minmax(0, 1fr);
@@ -919,11 +926,17 @@ pre.diffstat {
 .log-data { font-family: var(--mono); font-size: 11.5px; color: var(--ink-2); word-break: break-word; white-space: pre-wrap; }
 
 /* ==========================================================================
-   CONVERSATION — CTO page and the drawer's Chat tab share one anatomy.
-   Shapes from quartzi/apps/workspace/src/components/shell/hermes/HermesPanel.tsx
-   (`Transcript`, `Composer`) and ui/Avatar.tsx; colours from the brand above:
-   the agent speaks on stone, the operator's own words are ink, tool calls are
-   quiet hairline pills, reports from children are ruled cards.
+   CONVERSATION — the CTO page and the drawer's Chat tab share one anatomy.
+
+   A transcript of bubble rows: the agent speaks on stone, the operator's own
+   words are ink, and each run of consecutive turns from one speaker carries a
+   single avatar (a spacer holds the column straight where the face is
+   suppressed). A tool call is deliberately not a bubble — it is a quiet
+   hairline pill that expands in place — and a report from a child agent is a
+   ruled card, so three different kinds of traffic stay tellable apart at a
+   glance. Below them sits a pill-shaped composer with a round send button.
+   Colours come from the tokens at the top of this file; nothing here invents
+   its own.
    ========================================================================== */
 
 .cto { flex: 1 1 auto; min-width: 0; min-height: 0; display: flex; flex-direction: column; background: var(--ground); }

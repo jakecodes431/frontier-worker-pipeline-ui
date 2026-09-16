@@ -1,8 +1,9 @@
 // In-page fake server for standalone UI checks: open index.html?mock=1
 //
 // Replaces window.fetch and window.WebSocket with implementations of the
-// docs/API.md contract, backed by three agents in a CTO -> orchestrator ->
-// worker tree, a ticking PTY, and drifting usage numbers.
+// docs/API.md contract, backed by a CTO -> orchestrator -> workers tree
+// (finished, running and blocked workers all present), a ticking PTY, and
+// drifting usage numbers.
 //
 // This file is only imported when ?mock=1 is present (see app.js).
 
@@ -29,18 +30,18 @@ function seed() {
   const cto = {
     id: 'a-20260915-150500-1a2b',
     parentId: null,
-    name: 'control-room CTO',
+    name: 'notes-app CTO',
     role: 'cto',
     runtime: 'claude',
     model: 'claude-fable-5-1',
     effort: 'high',
     status: 'running',
-    task: 'Own the control room build and delegate the quartzi-site rebuild to an orchestrator.',
+    task: 'Own the notes-app roadmap and delegate the tags feature to an orchestrator.',
     note: '',
-    cwd: '/home/dev/projects/control-room',
+    cwd: '/home/dev/projects/notes-app',
     worktree: null,
     controlledBy: 'parent',
-    sessionId: '1b115b04-d427-44f9-a486-48bfc3604e2a',
+    sessionId: '00000000-0000-4000-8000-000000000001',
     pid: 21440,
     createdAt: iso(46 * 60000), startedAt: iso(45 * 60000), endedAt: null,
     elapsedS: 2700,
@@ -49,102 +50,177 @@ function seed() {
   const orch = {
     id: 'a-20260915-151200-7c9d',
     parentId: cto.id,
-    name: 'quartzi-site orchestrator',
+    name: 'tags orchestrator',
     role: 'orchestrator',
     runtime: 'claude',
     model: 'claude-fable-5-1-mini',
     effort: 'medium',
     status: 'running',
-    task: 'Rebuild the quartzi-site marketing pages against the new brand system.',
+    task: 'Ship tag support in notes-app: create, assign, and filter by tag.',
     note: '',
-    cwd: '/home/dev/projects/example-site',
+    cwd: '/home/dev/projects/notes-app/.worktrees/tags-0915',
     worktree: {
-      repo: '/home/dev/projects/example-site',
-      branch: 'cr/quartzi-rebuild',
-      path: '/home/dev/projects/example-site/.worktrees/quartzi-rebuild',
+      repo: '/home/dev/projects/notes-app',
+      branch: 'cr/tags-0915',
+      path: '/home/dev/projects/notes-app/.worktrees/tags-0915',
     },
     controlledBy: 'parent',
-    sessionId: 'b7f2c1d0-3e41-4a9f-9c22-51ad0f7e6a18',
+    sessionId: '00000000-0000-4000-8000-000000000002',
     pid: 21988,
     createdAt: iso(33 * 60000), startedAt: iso(32 * 60000), endedAt: null,
     elapsedS: 1920,
     usage: usage(188_400, 1_240_000, 74_500, 28_900, 2.1044, 2.1044),
   };
-  const worker = {
-    id: 'a-20260915-152730-4e11',
+
+  /** Every worker is one-shot, on DeepSeek, in its own worktree off the repo. */
+  const mkWorker = (o) => ({
     parentId: orch.id,
-    name: 'pricing page worker',
     role: 'worker',
     runtime: 'deepseek',
     model: 'deepseek-v4.1-flash',
     effort: 'low',
-    status: 'blocked',
-    task: 'Port the pricing table to the new token set and regenerate the comparison grid.',
-    note: 'Blocked: the design tokens file references --brand-quartz-600 which is not defined anywhere in the repo. Should I add it, or fall back to --brand-quartz-500?',
-    cwd: '/home/dev/projects/example-site/.worktrees/quartzi-rebuild',
+    note: '',
+    controlledBy: 'parent',
+    cwd: `/home/dev/projects/notes-app/.worktrees/${o.slug}-0915`,
     worktree: {
-      repo: '/home/dev/projects/example-site',
-      branch: 'cr/pricing-tokens',
-      path: '/home/dev/projects/example-site/.worktrees/pricing-tokens',
+      repo: '/home/dev/projects/notes-app',
+      branch: `cr/${o.slug}-0915`,
+      path: `/home/dev/projects/notes-app/.worktrees/${o.slug}-0915`,
     },
+    ...o,
+  });
+
+  // Round 1, finished: the storage layer every other worker was waiting on.
+  const storage = mkWorker({
+    id: 'a-20260915-152000-3f40',
+    slug: 'tags-storage',
+    name: 'tags-storage worker',
+    status: 'done',
+    task: 'Add the tags migration and server/db/tags.js against the agreed signatures.',
+    sessionId: '00000000-0000-4000-8000-000000000003',
+    pid: 22104,
+    createdAt: iso(26 * 60000), startedAt: iso(25 * 60000), endedAt: iso(17 * 60000),
+    elapsedS: 480,
+    usage: usage(71_900, 268_000, 9_400, 14_600, 0.0121, 0.9683),
+  });
+
+  // Round 2, blocked on a question only a human can settle.
+  const apiWorker = mkWorker({
+    id: 'a-20260915-152730-4e11',
+    slug: 'tags-api',
+    name: 'tags-api worker',
+    status: 'blocked',
+    task: 'Add the /api/tags routes and ?tag= filtering to GET /api/notes.',
+    note: 'Blocked: the brief says POST rejects a tag name longer than 32 characters with 400, but server/db/tags.js silently truncates at 64. Validate in the route as the brief says, or match the storage layer? I recommend the brief.',
     controlledBy: 'human',
-    sessionId: 'dsh-9f30a1',
+    sessionId: '00000000-0000-4000-8000-000000000004',
     pid: 22310,
     createdAt: iso(12 * 60000), startedAt: iso(11 * 60000), endedAt: null,
     elapsedS: 660,
     usage: usage(96_200, 410_000, 12_800, 18_300, 0.0187, 1.4962),
-  };
-  for (const a of [cto, orch, worker]) agents.set(a.id, a);
-  return { cto, orch, worker };
+  });
+
+  // Round 2, still going.
+  const uiWorker = mkWorker({
+    id: 'a-20260915-153100-9a05',
+    slug: 'tags-ui',
+    name: 'tags-ui worker',
+    status: 'running',
+    task: 'Build the tag filter control and wire it into the notes list.',
+    sessionId: '00000000-0000-4000-8000-000000000005',
+    pid: 22415,
+    createdAt: iso(9 * 60000), startedAt: iso(8 * 60000), endedAt: null,
+    elapsedS: 480,
+    usage: usage(64_300, 231_000, 8_100, 11_200, 0.0104, 0.8319),
+  });
+
+  // Round 2, finished.
+  const docsWorker = mkWorker({
+    id: 'a-20260915-153400-6b72',
+    slug: 'tags-docs',
+    name: 'tags-docs worker',
+    status: 'done',
+    task: 'Document the new routes in docs/api.md and the tag model in docs/tags.md.',
+    sessionId: '00000000-0000-4000-8000-000000000006',
+    pid: 22488,
+    createdAt: iso(8 * 60000), startedAt: iso(7 * 60000), endedAt: iso(4 * 60000),
+    elapsedS: 180,
+    usage: usage(38_700, 142_000, 5_200, 9_800, 0.0063, 0.5044),
+  });
+
+  const workers = [storage, apiWorker, uiWorker, docsWorker];
+  for (const a of [cto, orch, ...workers]) agents.set(a.id, a);
+  return { cto, orch, storage, apiWorker, uiWorker, docsWorker, workers };
 }
 
-const { cto, orch, worker } = seed();
+const { cto, orch, storage, apiWorker, uiWorker, docsWorker, workers } = seed();
+const allAgents = [cto, orch, ...workers];
 
-const messages = new Map([
-  [cto.id, []],
-  [orch.id, []],
-  [worker.id, []],
-]);
+const messages = new Map(allAgents.map((a) => [a.id, []]));
 
 const chats = new Map();
 chats.set(cto.id, [
-  { role: 'user', text: 'Stand up the control room: server, PTY manager, UI. Delegate the quartzi rebuild.', ts: iso(45 * 60000) },
-  { role: 'assistant', text: 'Plan:\n1. API contract in docs/API.md\n2. Server + PTY manager\n3. Browser UI\n4. Spawn the quartzi orchestrator once the contract is frozen.', ts: iso(44 * 60000) },
-  { role: 'tool', name: 'Write', text: 'docs/API.md (4636 bytes)', ts: iso(43 * 60000) },
-  { role: 'assistant', text: 'Contract frozen. Spawning the orchestrator against the quartzi-site repo in its own worktree.', ts: iso(33 * 60000) },
-  { role: 'tool', name: 'spawn', text: '{"agent":"quartzi-site orchestrator","worktree":"cr/quartzi-rebuild"}', ts: iso(33 * 60000) },
+  { role: 'user', text: 'Stand up the control room for notes-app and delegate the tags feature.', ts: iso(45 * 60000) },
+  { role: 'assistant', text: 'Plan:\n1. Read the repo and run the gate\n2. Freeze the storage and route interfaces\n3. Spawn a tags orchestrator in its own worktree\n4. Review every branch before it lands.', ts: iso(44 * 60000) },
+  { role: 'tool', name: 'Bash', text: 'npm run lint && npm test && npm run build — exit 0', ts: iso(43 * 60000) },
+  { role: 'assistant', text: 'Gate is green on main, so the run has a baseline. Spawning the orchestrator against notes-app in its own worktree.', ts: iso(33 * 60000) },
+  { role: 'tool', name: 'spawn', text: '{"agent":"tags orchestrator","worktree":"cr/tags-0915"}', ts: iso(33 * 60000) },
 ]);
 chats.set(orch.id, [
-  { role: 'user', text: 'Rebuild the quartzi-site marketing pages against the new brand system.', ts: iso(32 * 60000) },
-  { role: 'assistant', text: 'Splitting into four workers: pricing, home hero, docs shell, footer/nav. Starting with pricing since it blocks the others on tokens.', ts: iso(31 * 60000) },
-  { role: 'tool', name: 'Bash', text: 'git worktree add .worktrees/pricing-tokens -b cr/pricing-tokens', ts: iso(28 * 60000) },
-  { role: 'assistant', text: 'Pricing worker is live on DeepSeek. Waiting on its first report before fanning out the rest.', ts: iso(12 * 60000) },
+  { role: 'user', text: 'Ship tag support in notes-app: create, assign, and filter by tag.', ts: iso(32 * 60000) },
+  { role: 'assistant', text: 'Checkpoint before anything is spawned:\n\nDATA MODEL   tags(id, user_id, name) + note_tags(note_id, tag_id), migration 007_tags.sql\nINTERFACES   listTags(userId), addTagToNote(userId, noteId, name), removeTagFromNote(userId, noteId, tagId), listNotes(userId, { tag })\nWORKER SPLIT round 1 tags-storage; round 2 tags-api, tags-ui, tags-docs in parallel', ts: iso(31 * 60000) },
+  { role: 'tool', name: 'Bash', text: 'git worktree add .worktrees/tags-storage-0915 -b cr/tags-storage-0915', ts: iso(26 * 60000) },
+  { role: 'assistant', text: 'tags-storage is green and merged into my worktree. Fanning out round 2: api, ui and docs, file-disjoint.', ts: iso(12 * 60000) },
+  { role: 'assistant', text: 'tags-docs is done and merged. tags-ui is still working. tags-api has stopped on a validation question — it is in my inbox and needs a human.', ts: iso(3 * 60000) },
 ]);
-chats.set(worker.id, [
-  { role: 'user', text: 'Port the pricing table to the new token set and regenerate the comparison grid.', ts: iso(11 * 60000) },
-  { role: 'assistant', text: 'Reading src/styles/tokens.css and src/pages/pricing.astro.', ts: iso(10 * 60000) },
-  { role: 'tool', name: 'Read', text: 'src/styles/tokens.css — 118 lines', ts: iso(10 * 60000) },
-  { role: 'assistant', text: 'Converted 14 of 17 declarations. Three of them reference --brand-quartz-600, which is undefined.', ts: iso(3 * 60000) },
+chats.set(storage.id, [
+  { role: 'user', text: 'Add the tags migration and server/db/tags.js against the agreed signatures.', ts: iso(25 * 60000) },
+  { role: 'assistant', text: 'Wrote server/db/migrations/007_tags.sql and server/db/tags.js with the four exported functions, plus server/db/tags.test.js.', ts: iso(19 * 60000) },
+  { role: 'tool', name: 'Bash', text: 'npm run migrate && npm test — exit 0', ts: iso(18 * 60000) },
+  { role: 'assistant', text: 'Gate green on cr/tags-storage-0915. 11 new tests. Nothing outside the file map changed.', ts: iso(17 * 60000) },
+]);
+chats.set(apiWorker.id, [
+  { role: 'user', text: 'Add the /api/tags routes and ?tag= filtering to GET /api/notes.', ts: iso(11 * 60000) },
+  { role: 'assistant', text: 'Reading server/routes/notes.js to copy its router factory and error handling.', ts: iso(10 * 60000) },
+  { role: 'tool', name: 'Read', text: 'server/routes/notes.js — 214 lines', ts: iso(10 * 60000) },
+  { role: 'assistant', text: 'GET /api/tags, POST and DELETE are written and the ?tag= pass-through is in. One conflict: the brief caps a tag name at 32 characters, the storage layer truncates at 64.', ts: iso(3 * 60000) },
   { role: 'user', text: 'Hold there, I want to look at it.', ts: iso(2 * 60000) },
   { role: 'assistant', text: 'Holding. Marked myself blocked with the question in the note field.', ts: iso(110000) },
 ]);
+chats.set(uiWorker.id, [
+  { role: 'user', text: 'Build the tag filter control and wire it into the notes list.', ts: iso(8 * 60000) },
+  { role: 'assistant', text: 'TagFilter.jsx renders the tag list from GET /api/tags and pushes ?tag= into the router query. Writing the list integration now.', ts: iso(5 * 60000) },
+  { role: 'tool', name: 'Write', text: 'ui/src/components/TagFilter.jsx (2.1 kB)', ts: iso(4 * 60000) },
+]);
+chats.set(docsWorker.id, [
+  { role: 'user', text: 'Document the new routes in docs/api.md and the tag model in docs/tags.md.', ts: iso(7 * 60000) },
+  { role: 'assistant', text: 'Both pages written from the interface block in the brief. docs/api.md gains the three routes and the ?tag= parameter; docs/tags.md explains implicit creation and per-user scope.', ts: iso(5 * 60000) },
+  { role: 'assistant', text: 'Gate green on cr/tags-docs-0915. Docs only, no code touched.', ts: iso(4 * 60000) },
+]);
 
-const inboxes = new Map();
-inboxes.set(orch.id, [
+const inboxes = new Map(allAgents.map((a) => [a.id, []]));
+inboxes.get(orch.id).push(
   {
-    id: nextId('m'), agentId: orch.id, direction: 'report', sender: 'agent:' + worker.id,
-    text: 'Pricing worker: 14/17 token declarations ported. Blocked on an undefined --brand-quartz-600.',
+    id: nextId('m'), agentId: orch.id, direction: 'report', sender: 'agent:' + storage.id,
+    text: 'tags-storage: migration 007_tags.sql and server/db/tags.js landed on cr/tags-storage-0915, 11 tests, gate exit 0.',
+    createdAt: iso(17 * 60000),
+  },
+  {
+    id: nextId('m'), agentId: orch.id, direction: 'report', sender: 'agent:' + docsWorker.id,
+    text: 'tags-docs: docs/api.md and docs/tags.md written on cr/tags-docs-0915, gate exit 0, no code touched.',
+    createdAt: iso(4 * 60000),
+  },
+  {
+    id: nextId('m'), agentId: orch.id, direction: 'report', sender: 'agent:' + apiWorker.id,
+    text: 'tags-api: routes written, blocked on the 32 vs 64 character tag-name conflict between the brief and the storage layer.',
     createdAt: iso(110000),
   },
-]);
-inboxes.set(cto.id, [
-  {
-    id: nextId('m'), agentId: cto.id, direction: 'report', sender: 'agent:' + orch.id,
-    text: 'Orchestrator: worktree cr/quartzi-rebuild created, first worker dispatched, one blocker pending a human decision.',
-    createdAt: iso(90000),
-  },
-]);
-inboxes.set(worker.id, []);
+);
+inboxes.get(cto.id).push({
+  id: nextId('m'), agentId: cto.id, direction: 'report', sender: 'agent:' + orch.id,
+  text: 'Orchestrator: round 1 integrated and green, round 2 fanned out. Two of three workers finished; one blocker is waiting on a human decision.',
+  createdAt: iso(90000),
+});
 
 const events = new Map();
 function ev(agentId, kind, data, msAgo) {
@@ -153,91 +229,134 @@ function ev(agentId, kind, data, msAgo) {
 events.set(cto.id, [
   ev(cto.id, 'spawned', { pid: 21440, runtime: 'claude' }, 45 * 60000),
   ev(cto.id, 'status', { from: 'queued', to: 'running' }, 45 * 60000 - 500),
-  ev(cto.id, 'action', { action: 'note', text: 'contract frozen' }, 33 * 60000),
+  ev(cto.id, 'action', { action: 'note', text: 'interfaces frozen' }, 33 * 60000),
 ]);
 events.set(orch.id, [
-  ev(orch.id, 'spawned', { pid: 21988, runtime: 'claude', worktree: 'cr/quartzi-rebuild' }, 32 * 60000),
+  ev(orch.id, 'spawned', { pid: 21988, runtime: 'claude', worktree: 'cr/tags-0915' }, 32 * 60000),
   ev(orch.id, 'status', { from: 'queued', to: 'running' }, 32 * 60000 - 400),
-  ev(orch.id, 'spawned', { child: worker.id }, 12 * 60000),
+  ev(orch.id, 'spawned', { child: storage.id }, 25 * 60000),
+  ev(orch.id, 'spawned', { child: apiWorker.id }, 12 * 60000),
+  ev(orch.id, 'spawned', { child: uiWorker.id }, 8 * 60000),
+  ev(orch.id, 'spawned', { child: docsWorker.id }, 7 * 60000),
 ]);
-events.set(worker.id, [
-  ev(worker.id, 'spawned', { pid: 22310, runtime: 'deepseek' }, 11 * 60000),
-  ev(worker.id, 'status', { from: 'queued', to: 'running' }, 11 * 60000 - 300),
-  ev(worker.id, 'error', { message: 'css var --brand-quartz-600 is not defined', file: 'src/styles/tokens.css' }, 3 * 60000),
-  ev(worker.id, 'control', { holder: 'human' }, 2 * 60000),
-  ev(worker.id, 'status', { from: 'running', to: 'blocked', note: 'awaiting token decision' }, 110000),
+events.set(storage.id, [
+  ev(storage.id, 'spawned', { pid: 22104, runtime: 'deepseek' }, 25 * 60000),
+  ev(storage.id, 'status', { from: 'queued', to: 'running' }, 25 * 60000 - 300),
+  ev(storage.id, 'exit', { code: 0 }, 17 * 60000),
+  ev(storage.id, 'status', { from: 'running', to: 'done' }, 17 * 60000 - 200),
+]);
+events.set(apiWorker.id, [
+  ev(apiWorker.id, 'spawned', { pid: 22310, runtime: 'deepseek' }, 11 * 60000),
+  ev(apiWorker.id, 'status', { from: 'queued', to: 'running' }, 11 * 60000 - 300),
+  ev(apiWorker.id, 'error', { message: 'tag name length rule disagrees with server/db/tags.js', file: 'server/routes/tags.js' }, 3 * 60000),
+  ev(apiWorker.id, 'control', { holder: 'human' }, 2 * 60000),
+  ev(apiWorker.id, 'status', { from: 'running', to: 'blocked', note: 'awaiting validation decision' }, 110000),
+]);
+events.set(uiWorker.id, [
+  ev(uiWorker.id, 'spawned', { pid: 22415, runtime: 'deepseek' }, 8 * 60000),
+  ev(uiWorker.id, 'status', { from: 'queued', to: 'running' }, 8 * 60000 - 300),
+]);
+events.set(docsWorker.id, [
+  ev(docsWorker.id, 'spawned', { pid: 22488, runtime: 'deepseek' }, 7 * 60000),
+  ev(docsWorker.id, 'status', { from: 'queued', to: 'running' }, 7 * 60000 - 300),
+  ev(docsWorker.id, 'exit', { code: 0 }, 4 * 60000),
+  ev(docsWorker.id, 'status', { from: 'running', to: 'done' }, 4 * 60000 - 200),
 ]);
 
-const DIFF = `diff --git a/src/styles/tokens.css b/src/styles/tokens.css
-index 3f1a9c2..b7d40e1 100644
---- a/src/styles/tokens.css
-+++ b/src/styles/tokens.css
-@@ -12,9 +12,12 @@
- :root {
--  --price-card-bg: #ffffff;
--  --price-card-border: #e5e7eb;
--  --price-accent: #7c5cff;
-+  --price-card-bg: var(--brand-surface-1);
-+  --price-card-border: var(--brand-line-2);
-+  --price-accent: var(--brand-quartz-500);
-+  /* TODO: three declarations below still want --brand-quartz-600 */
-+  --price-accent-strong: var(--brand-quartz-600);
-+  --price-ring: var(--brand-quartz-600);
- }
-diff --git a/src/pages/pricing.astro b/src/pages/pricing.astro
+const DIFF = `diff --git a/server/routes/tags.js b/server/routes/tags.js
+new file mode 100644
+index 0000000..b7d40e1
+--- /dev/null
++++ b/server/routes/tags.js
+@@ -0,0 +1,18 @@
++const { Router } = require('express');
++const { asyncHandler } = require('../lib/asyncHandler');
++const { listTags, addTagToNote } = require('../db/tags');
++
++module.exports = function tagsRouter() {
++  const router = Router();
++  router.get('/tags', asyncHandler(async (req, res) => {
++    res.json({ tags: listTags(req.user.id) });
++  }));
++  router.post('/notes/:noteId/tags', asyncHandler(async (req, res) => {
++    const name = String(req.body.name || '').trim();
++    // TODO: the brief caps this at 32; server/db/tags.js truncates at 64.
++    if (!name || name.length > 32) return res.status(400).json({ error: 'invalid tag name' });
++    res.status(201).json({ tag: addTagToNote(req.user.id, req.params.noteId, name) });
++  }));
++  return router;
++};
+diff --git a/server/routes/notes.js b/server/routes/notes.js
 index 91c2b0a..2ee61f4 100644
---- a/src/pages/pricing.astro
-+++ b/src/pages/pricing.astro
-@@ -40,7 +40,7 @@ const tiers = await getTiers();
--      <table class="legacy-compare">
-+      <table class="compare-grid" data-cols={tiers.length}>
-         <thead>
--          <tr><th>Feature</th>{tiers.map(t => <th>{t.name}</th>)}</tr>
-+          <tr><th scope="col">Feature</th>{tiers.map(t => <th scope="col">{t.name}</th>)}</tr>
-         </thead>
+--- a/server/routes/notes.js
++++ b/server/routes/notes.js
+@@ -40,7 +40,7 @@ router.get('/notes', asyncHandler(async (req, res) => {
+-  const notes = listNotes(req.user.id);
++  const notes = listNotes(req.user.id, { tag: req.query.tag });
+   res.json({ notes });
+ }));
 `;
 
-const STAT = ` src/pages/pricing.astro  |  8 ++++----
- src/styles/tokens.css    | 11 +++++++----
- 2 files changed, 12 insertions(+), 7 deletions(-)`;
+const STAT = ` server/routes/index.js     |  3 ++-
+ server/routes/notes.js     |  2 +-
+ server/routes/tags.js      | 18 ++++++++++++++++++
+ server/routes/tags.test.js | 64 ++++++++++++++++++++++++++++++++++++++++++
+ 4 files changed, 86 insertions(+), 1 deletion(-)`;
 
 const FILES = {
   changed: [
-    { path: 'src/styles/tokens.css', status: 'modified' },
-    { path: 'src/pages/pricing.astro', status: 'modified' },
-    { path: 'src/components/CompareGrid.astro', status: 'added' },
-    { path: 'src/components/LegacyTable.astro', status: 'deleted' },
+    { path: 'server/routes/tags.js', status: 'added' },
+    { path: 'server/routes/tags.test.js', status: 'added' },
+    { path: 'server/routes/notes.js', status: 'modified' },
+    { path: 'server/routes/index.js', status: 'modified' },
   ],
   tree: [
-    { path: 'src/pages/index.astro', size: 4821 },
-    { path: 'src/pages/pricing.astro', size: 7314 },
-    { path: 'src/styles/tokens.css', size: 3180 },
-    { path: 'src/components/CompareGrid.astro', size: 2044 },
+    { path: 'server/routes/index.js', size: 1204 },
+    { path: 'server/routes/notes.js', size: 6218 },
+    { path: 'server/routes/tags.js', size: 1877 },
+    { path: 'server/db/tags.js', size: 3180 },
+    { path: 'ui/src/components/TagFilter.jsx', size: 2044 },
     { path: 'package.json', size: 916 },
     { path: 'README.md', size: 1422 },
   ],
 };
 
 const FILE_CONTENT = {
-  'src/styles/tokens.css': `:root {\n  --brand-quartz-500: #7c5cff;\n  --brand-surface-1: #ffffff;\n  --brand-line-2: #e5e7eb;\n\n  --price-card-bg: var(--brand-surface-1);\n  --price-card-border: var(--brand-line-2);\n  --price-accent: var(--brand-quartz-500);\n  --price-accent-strong: var(--brand-quartz-600); /* undefined! */\n  --price-ring: var(--brand-quartz-600);          /* undefined! */\n}\n`,
-  'src/pages/pricing.astro': `---\nimport CompareGrid from '../components/CompareGrid.astro';\nconst tiers = await getTiers();\n---\n<section class="pricing">\n  <CompareGrid tiers={tiers} />\n</section>\n`,
+  'server/db/tags.js': `const { NotFoundError } = require('./errors');\n\n/** -> [{ id, name, noteCount }], name ascending */\nfunction listTags(userId) { /* ... */ }\n\n/** creates the tag if new; idempotent */\nfunction addTagToNote(userId, noteId, name) {\n  const clean = String(name).trim().toLowerCase().slice(0, 64); // truncates at 64\n  /* ... */\n}\n\nmodule.exports = { listTags, addTagToNote, removeTagFromNote };\n`,
+  'server/routes/notes.js': `const { Router } = require('express');\nconst { listNotes } = require('../db/notes');\n\nrouter.get('/notes', asyncHandler(async (req, res) => {\n  const notes = listNotes(req.user.id, { tag: req.query.tag });\n  res.json({ notes });\n}));\n`,
 };
+
+/** Sum the DeepSeek workers into the one tier the dashboard reports. */
+function deepseekTier() {
+  const t = usage(0, 0, 0, 0, 0, 0);
+  for (const w of workers) {
+    const u = agents.get(w.id).usage;
+    t.inputTokens += u.inputTokens;
+    t.cacheReadTokens += u.cacheReadTokens;
+    t.cacheWriteTokens += u.cacheWriteTokens;
+    t.outputTokens += u.outputTokens;
+    t.totalTokens += u.totalTokens;
+    t.costUsd = Number((t.costUsd + u.costUsd).toFixed(6));
+    t.fableEquivalentUsd = Number((t.fableEquivalentUsd + u.fableEquivalentUsd).toFixed(6));
+  }
+  return t;
+}
 
 let usageSummary = {
   spend: { today: 9.5354, week: 41.2087, month: 128.4413 },
   currentRun: { costUsd: 0.4318, startedAt: iso(46 * 60000) },
   byTier: {
-    cto: usage(412_000, 3_950_000, 186_000, 61_400, 7.4123, 7.4123),
-    orchestrator: usage(188_400, 1_240_000, 74_500, 28_900, 2.1044, 2.1044),
-    deepseek: usage(96_200, 410_000, 12_800, 18_300, 0.0187, 1.4962),
+    cto: cto.usage,
+    orchestrator: orch.usage,
+    deepseek: deepseekTier(),
   },
-  counts: { active: 2, done: 5, blocked: 1, failed: 0 },
-  tokens: { input: 696_600, cacheRead: 5_600_000, cacheWrite: 273_300, output: 108_600, total: 6_678_500 },
+  counts: { active: 3, done: 2, blocked: 1, failed: 0 },
+  tokens: { input: 871_500, cacheRead: 6_241_000, cacheWrite: 296_000, output: 144_200, total: 7_552_700 },
   limits: {
     claude: { note: 'weekly limit resets Sun 00:00 UTC', used: '38%', resetsAt: iso(-3 * 3600 * 1000) },
     deepseek: null,
   },
-  savings: { deepseekActualUsd: 0.0187, fableEquivalentUsd: 1.4962, savedUsd: 1.4775, estimated: true },
+  savings: { deepseekActualUsd: 0.0475, fableEquivalentUsd: 3.8008, savedUsd: 3.7533, estimated: true },
   pricing: { source: 'config/pricing.json', estimated: true },
 };
 
@@ -350,9 +469,9 @@ function scrollbackFor(id) {
     '\x1b[2J\x1b[H',
     `\x1b[38;5;75m● control-room mock pty\x1b[0m — \x1b[1m${name}\x1b[0m\r\n`,
     `\x1b[90m${id}\x1b[0m\r\n\r\n`,
-    '\x1b[90m$\x1b[0m npm run build\r\n',
-    '\x1b[32m✔\x1b[0m tokens.css compiled\r\n',
-    '\x1b[33m!\x1b[0m warning: --brand-quartz-600 is not defined\r\n',
+    '\x1b[90m$\x1b[0m npm test\r\n',
+    '\x1b[32m✔\x1b[0m server/db/tags.test.js — 11 passing\r\n',
+    '\x1b[33m!\x1b[0m server/routes/tags.test.js — 2 pending\r\n',
     '\x1b[90m$\x1b[0m \x1b[5m▌\x1b[0m\r\n',
   ].join('');
 }
@@ -365,7 +484,7 @@ setInterval(() => {
     for (const id of s._attached) {
       if (!mockLive(id)) continue;   // an exited process emits nothing
       const line = `\x1b[90m[${new Date().toLocaleTimeString('en-GB', { hour12: false })}]\x1b[0m tick ${ptyTick} · ` +
-        `\x1b[38;5;75m${(Math.random() * 100).toFixed(1)}%\x1b[0m cpu · scanning ${['src/pages', 'src/styles', 'src/components'][ptyTick % 3]}\r\n`;
+        `\x1b[38;5;75m${(Math.random() * 100).toFixed(1)}%\x1b[0m cpu · scanning ${['server/routes', 'server/db', 'ui/src/components'][ptyTick % 3]}\r\n`;
       s._deliver(JSON.stringify({ type: 'pty', id, data: line }));
     }
   }
@@ -391,7 +510,7 @@ setInterval(() => {
   }
   usageSummary.byTier.cto = agents.get(cto.id).usage;
   usageSummary.byTier.orchestrator = agents.get(orch.id).usage;
-  usageSummary.byTier.deepseek = agents.get(worker.id).usage;
+  usageSummary.byTier.deepseek = deepseekTier();
 
   const tk = { input: 0, cacheRead: 0, cacheWrite: 0, output: 0, total: 0 };
   let today = 0;
@@ -410,7 +529,7 @@ setInterval(() => {
     month: Number((today + 118.9).toFixed(4)),
   };
   usageSummary.currentRun.costUsd = Number((usageSummary.currentRun.costUsd + 0.004).toFixed(6));
-  const ds = agents.get(worker.id).usage;
+  const ds = usageSummary.byTier.deepseek;
   usageSummary.savings = {
     deepseekActualUsd: ds.costUsd,
     fableEquivalentUsd: ds.fableEquivalentUsd,
@@ -429,7 +548,7 @@ function countStatuses() {
     else if (a.status === 'blocked') blocked += 1;
     else if (a.status === 'failed') failed += 1;
   }
-  return { active, done: done + 5, blocked, failed };
+  return { active, done, blocked, failed };
 }
 
 // Occasional full state frame, as a real server would emit on change.
@@ -440,7 +559,7 @@ setInterval(() => {
   const list = chats.get(orch.id);
   list.push({
     role: 'assistant',
-    text: `Progress ping ${new Date().toLocaleTimeString('en-GB', { hour12: false })}: still waiting on the pricing worker's token decision.`,
+    text: `Progress ping ${new Date().toLocaleTimeString('en-GB', { hour12: false })}: still waiting on the tags-api worker's validation decision.`,
     ts: now(),
   });
   if (list.length > 40) list.splice(0, list.length - 40);

@@ -12,21 +12,18 @@
 </head>
 <body>
 
-<!-- The crystal mark, facets copied verbatim from
-     quartzi-site/public/quartzi-mark.svg (the transparent mark the quartzi.ai
-     header draws on its cave capsule). The rail sets it on a cave tile for the
-     same reason: its lightest facet disappears on a white ground. -->
+<!-- The application mark: one parent node branching to two children, which is
+     the shape this whole app is about. Drawn for this repo; it sits on a stone
+     tile so the strokes keep their contrast on a white page. -->
 <svg width="0" height="0" style="position:absolute" aria-hidden="true">
-  <symbol id="quartzi-mark" viewBox="0 0 64 64">
-    <polygon points="35.54,12.91 39.42,16.80 16.80,39.42 12.91,35.54" fill="#FAFAFA"/>
-    <polygon points="39.42,16.80 47.20,24.58 24.58,47.20 16.80,39.42" fill="#D8D8D8"/>
-    <polygon points="47.20,24.58 51.09,28.46 28.46,51.09 24.58,47.20" fill="#6E6E6E"/>
-    <polygon points="35.54,12.91 39.42,16.80 51.09,12.91" fill="#F4F4F4"/>
-    <polygon points="39.42,16.80 47.20,24.58 51.09,12.91" fill="#E4E4E4"/>
-    <polygon points="47.20,24.58 51.09,28.46 51.09,12.91" fill="#8A8A8A"/>
-    <polygon points="12.91,35.54 16.80,39.42 12.91,51.09" fill="#EDEDED"/>
-    <polygon points="16.80,39.42 24.58,47.20 12.91,51.09" fill="#C4C4C4"/>
-    <polygon points="24.58,47.20 28.46,51.09 12.91,51.09" fill="#585858"/>
+  <symbol id="app-mark" viewBox="0 0 64 64">
+    <g fill="none" stroke="#55534F" stroke-width="4.5" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M32 21v7"/>
+      <path d="M16 36v-8h32v8"/>
+    </g>
+    <circle cx="32" cy="14" r="7" fill="#202020"/>
+    <circle cx="16" cy="43" r="6.5" fill="none" stroke="#202020" stroke-width="4.5"/>
+    <circle cx="48" cy="43" r="6.5" fill="none" stroke="#202020" stroke-width="4.5"/>
   </symbol>
 </svg>
 
@@ -40,7 +37,7 @@
       </svg>
     </button>
     <div class="brand">
-      <span class="brand-tile" aria-hidden="true"><svg class="brand-mark"><use href="#quartzi-mark"/></svg></span>
+      <span class="brand-tile" aria-hidden="true"><svg class="brand-mark"><use href="#app-mark"/></svg></span>
       <span class="brand-text"><span class="brand-name">Control Room</span></span>
     </div>
     <div class="topbar-right">
@@ -57,7 +54,7 @@
   <!-- ------------------------------------------------------- the rail -->
   <aside class="sidebar" id="sidebar">
     <div class="brand">
-      <span class="brand-tile" aria-hidden="true"><svg class="brand-mark"><use href="#quartzi-mark"/></svg></span>
+      <span class="brand-tile" aria-hidden="true"><svg class="brand-mark"><use href="#app-mark"/></svg></span>
       <span class="brand-text">
         <span class="brand-name">Control Room</span>
         <span class="brand-sub" id="brand-sub">local coding fleet</span>

@@ -4,7 +4,7 @@
 // are merged by time with `mergeThread` from views/cto.js, so a worker's tab
 // and the CTO page are the same object at two sizes: avatar-led bubble runs,
 // tool calls as quiet pills rather than bubbles, reports from children as
-// ruled cards, and Quartzi's one-bar composer with a round send button.
+// ruled cards, and a one-bar composer with a round send button.
 
 import { h, replace, clear, toast } from '../../lib/dom.js';
 import * as f from '../../lib/format.js';
