@@ -127,7 +127,7 @@ reports folded into the same thread.
 **Install and run**
 
 ```sh
-git clone <this repo>
+git clone https://github.com/jakecodes431/frontier-worker-pipeline-ui.git
 cd frontier-worker-pipeline-ui
 npm ci          # reproducible install from package-lock.json
 npm test        # offline checks; no CLI is spawned and no tokens are spent
@@ -192,8 +192,9 @@ Windows are all supported. On Windows the pty layer uses ConPTY, so Windows 10
 - The first time an agent CLI runs in a folder it may show a trust prompt or a
   one-time feature prompt. Answer it yourself in that agent's **Terminal** tab.
   The control room deliberately does **not** auto-accept trust prompts.
-- Nothing is spawned until you create an agent. `npm test` is the offline gate:
-  it syntax-checks every shipped JavaScript file, refuses hard-coded home
+- Nothing is spawned until you create an agent. `npm test` (the same as
+  `npm run check`) is the offline gate. It starts with `scripts/smoke.mjs`, which
+  syntax-checks every shipped JavaScript file, refuses hard-coded home
   directories in the source, runs the pure UI modules in Node, then boots the
   server on a free port with a scratch data directory and a scratch
   `CR_CONFIG_DIR` and exercises the contract — the config expansion, the
@@ -201,9 +202,12 @@ Windows are all supported. On Windows the pty layer uses ConPTY, so Windows 10
   a working directory deleted underneath an agent, the usage delta arithmetic,
   deletion and re-parenting, and the WebSocket — without spawning any CLI or
   spending any tokens. It exits non-zero on the first broken assertion; that is
-  the point of it. What it cannot prove is that a real Claude Code or Codex
-  session works against your provider account — that is a live check only you
-  can run.
+  the point of it. After the smoke test the gate runs the focused suites in
+  `scripts/*-tests.mjs` (runtime adapters, UI helpers, limits, lifecycle, history
+  import, budget, usage connection, pricing, directory picker, message delivery,
+  agent stop), each also offline. What it cannot prove is that a real Claude Code
+  or Codex session works against your provider account — that is a live check
+  only you can run.
 
 ---
 
@@ -698,11 +702,13 @@ HTTP/WebSocket checks reduce browser exposure; they do not authenticate users.
   it through a reverse proxy, port forward or tunnel.
 - **Managed agents are real processes** with your user's privileges, in
   directories you name, and they inherit your environment — minus the agent-CLI
-  markers the adapters always strip, and minus the credential-looking variables
-  for a runtime that opts into scrubbing (in the default config, the `deepseek`
-  worker). They can write files and run commands. An **external registration is
-  not a process**: it is a record plus a transcript read, with no pty and no
-  terminal input. Give managed agents worktrees, not your home directory.
+  markers the adapters always strip, and minus every inherited variable whose
+  name contains `KEY`, `TOKEN` or `SECRET`: the shipped `config/runtimes.json`
+  applies that scrub to all three managed runtimes (`claude`, `codex`, `deepseek`),
+  each keeping only its own authentication variables named in `keepEnv`. They
+  can write files and run commands. An **external registration is not a
+  process**: it is a record plus a transcript read, with no pty and no terminal
+  input. Give managed agents worktrees, not your home directory.
 - **It reads CLI transcripts on your machine** to compute usage — the JSONL and
   JSON session files those CLIs already write under your home directory. Those
   files contain your prompts and the models' replies. The control room reads
@@ -718,6 +724,9 @@ HTTP/WebSocket checks reduce browser exposure; they do not authenticate users.
   managed runtimes), it deletes credential-looking variables
   from that runtime's environment before spawning; a runtime that does not ask
   inherits them.
+
+How to report a vulnerability, and what is and is not in scope, is in
+[SECURITY.md](SECURITY.md).
 
 ---
 
@@ -740,7 +749,8 @@ ui/                browser UI: vanilla ES modules, no build step
   lib/             api, ws, store, dom, formatting
   mock.js          in-page fake server for UI work (`?mock=1`)
 config/            runtimes.json, pricing.json, protocol.md
-scripts/smoke.mjs  offline API smoke test (run by `npm test`)
+scripts/smoke.mjs  offline API smoke test (first step of `npm test`)
+scripts/*-tests.mjs  the rest of the offline gate (runtime, UI, limits, lifecycle, ...)
 scripts/launch-orchestrator.mjs  spawn an orchestrator through the running
                    server's API (`--help` for options)
 briefs/            what a brief is, plus example orchestrator/worker briefs
@@ -748,6 +758,7 @@ examples/          a worked end-to-end run (one orchestrator, three workers)
 docs/API.md        the HTTP + WebSocket contract
 docs/TROUBLESHOOTING.md  the real failure modes and what to do about them
 docs/screenshots/  the images used in this README
+CHANGELOG.md       release notes; SECURITY.md  reporting and scope
 .claude/           agent skills and an agent definition shipped with the repo;
                    third-party skills are credited in NOTICE and keep their own
                    LICENSE files
