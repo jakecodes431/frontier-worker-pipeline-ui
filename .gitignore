@@ -1,0 +1,20 @@
+node_modules/
+
+# Runtime state: SQLite database, agent briefs, terminal scrollback (CR_DATA_DIR)
+data/
+
+# Git worktrees created for agents
+.worktrees/
+
+# Local secrets and machine-specific settings (.env.example is the template)
+.env
+.env.*
+!.env.example
+
+# Local config overrides kept next to the checkout
+config/*.local.json
+
+# Editor / OS noise
+.DS_Store
+Thumbs.db
+*.log

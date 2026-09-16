@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Control Room</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap">
+<link rel="stylesheet" href="/vendor/xterm/xterm.css">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<!-- The crystal mark, facets copied verbatim from
+     quartzi-site/public/quartzi-mark.svg (the transparent mark the quartzi.ai
+     header draws on its cave capsule). The rail sets it on a cave tile for the
+     same reason: its lightest facet disappears on a white ground. -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="quartzi-mark" viewBox="0 0 64 64">
+    <polygon points="35.54,12.91 39.42,16.80 16.80,39.42 12.91,35.54" fill="#FAFAFA"/>
+    <polygon points="39.42,16.80 47.20,24.58 24.58,47.20 16.80,39.42" fill="#D8D8D8"/>
+    <polygon points="47.20,24.58 51.09,28.46 28.46,51.09 24.58,47.20" fill="#6E6E6E"/>
+    <polygon points="35.54,12.91 39.42,16.80 51.09,12.91" fill="#F4F4F4"/>
+    <polygon points="39.42,16.80 47.20,24.58 51.09,12.91" fill="#E4E4E4"/>
+    <polygon points="47.20,24.58 51.09,28.46 51.09,12.91" fill="#8A8A8A"/>
+    <polygon points="12.91,35.54 16.80,39.42 12.91,51.09" fill="#EDEDED"/>
+    <polygon points="16.80,39.42 24.58,47.20 12.91,51.09" fill="#C4C4C4"/>
+    <polygon points="24.58,47.20 28.46,51.09 12.91,51.09" fill="#585858"/>
+  </symbol>
+</svg>
+
+<div class="app">
+
+  <!-- ------------------------------------------------ mobile top bar -->
+  <header class="topbar">
+    <button class="icon-btn" id="nav-toggle" aria-label="Open navigation" aria-expanded="false">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" aria-hidden="true">
+        <path d="M4 7h16M4 12h16M4 17h16"/>
+      </svg>
+    </button>
+    <div class="brand">
+      <span class="brand-tile" aria-hidden="true"><svg class="brand-mark"><use href="#quartzi-mark"/></svg></span>
+      <span class="brand-text"><span class="brand-name">Control Room</span></span>
+    </div>
+    <div class="topbar-right">
+      <div class="conn" id="conn-mobile" title="Websocket connection">
+        <span class="conn-dot" data-state="connecting"></span>
+        <span class="conn-text">connecting</span>
+      </div>
+      <button class="btn btn-primary btn-sm" id="new-agent-btn-mobile">New agent</button>
+    </div>
+  </header>
+
+  <div class="scrim" id="nav-scrim"></div>
+
+  <!-- ------------------------------------------------------- the rail -->
+  <aside class="sidebar" id="sidebar">
+    <div class="brand">
+      <span class="brand-tile" aria-hidden="true"><svg class="brand-mark"><use href="#quartzi-mark"/></svg></span>
+      <span class="brand-text">
+        <span class="brand-name">Control Room</span>
+        <span class="brand-sub" id="brand-sub">local coding fleet</span>
+      </span>
+    </div>
+
+    <div class="rule"></div>
+
+    <div class="side-scroll">
+      <nav class="nav" id="nav" aria-label="Views">
+        <button class="nav-item" data-view="dashboard" aria-selected="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <rect x="3" y="3" width="7.5" height="8.5" rx="1.6"/>
+            <rect x="13.5" y="3" width="7.5" height="5" rx="1.6"/>
+            <rect x="13.5" y="11" width="7.5" height="10" rx="1.6"/>
+            <rect x="3" y="14.5" width="7.5" height="6.5" rx="1.6"/>
+          </svg>
+          Dashboard
+        </button>
+        <button class="nav-item" data-view="cto" aria-selected="false">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M21 11.5a8.4 8.4 0 0 1-9 8.4L3 21l1.1-4.6A8.4 8.4 0 1 1 21 11.5z"/>
+            <path d="M8.5 11.5h7M8.5 8.5h4"/>
+          </svg>
+          CTO
+          <span class="nav-count" id="nav-badge-cto" hidden></span>
+        </button>
+        <button class="nav-item" data-view="hierarchy" aria-selected="false">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <rect x="9" y="2.5" width="6" height="5" rx="1.4"/>
+            <rect x="2.5" y="16.5" width="6" height="5" rx="1.4"/>
+            <rect x="15.5" y="16.5" width="6" height="5" rx="1.4"/>
+            <path d="M12 7.5v4.5M5.5 16.5V12h13v4.5"/>
+          </svg>
+          Hierarchy
+          <span class="nav-count" id="nav-count-hierarchy"></span>
+        </button>
+      </nav>
+
+      <div class="side-section-label eyebrow">Workspace</div>
+      <div class="side-stats" id="side-stats">
+        <div class="side-stat" data-live="0">
+          <div class="side-stat-value" id="side-active">—</div>
+          <div class="side-stat-label">active</div>
+        </div>
+        <div class="side-stat">
+          <div class="side-stat-value" id="side-done">—</div>
+          <div class="side-stat-label">done</div>
+        </div>
+        <div class="side-stat">
+          <div class="side-stat-value" id="side-spend">—</div>
+          <div class="side-stat-label">today</div>
+        </div>
+        <div class="side-stat">
+          <div class="side-stat-value" id="side-tokens">—</div>
+          <div class="side-stat-label">tokens</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="side-foot">
+      <div class="conn" id="conn" title="Websocket connection">
+        <span class="conn-dot" data-state="connecting"></span>
+        <span class="conn-text">connecting</span>
+        <span class="conn-meta" id="conn-meta"></span>
+      </div>
+      <button class="btn btn-primary btn-block" id="new-agent-btn">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" aria-hidden="true">
+          <path d="M12 5v14M5 12h14"/>
+        </svg>
+        New agent
+      </button>
+    </div>
+  </aside>
+
+  <!-- ------------------------------------------------------ the page -->
+  <main class="main" id="main">
+    <section class="view" id="view-dashboard" aria-label="Dashboard"></section>
+    <section class="view view-flush" id="view-cto" hidden aria-label="CTO chat"></section>
+    <section class="view" id="view-hierarchy" hidden aria-label="Hierarchy">
+      <div class="hierarchy-page">
+        <div class="tree-head">
+          <h1 class="tree-title">Agents</h1>
+          <span class="tree-count" id="tree-count"></span>
+          <div class="seg" id="hier-mode" role="tablist" aria-label="Layout">
+            <button class="seg-btn" role="tab" data-mode="list" aria-selected="true">List</button>
+            <button class="seg-btn" role="tab" data-mode="board" aria-selected="false">Board</button>
+          </div>
+          <div class="tree-legend" aria-hidden="true">
+            <span><i data-status="running"></i>running</span>
+            <span><i data-status="idle"></i>idle</span>
+            <span><i data-status="blocked"></i>blocked</span>
+            <span><i data-status="done"></i>done</span>
+            <span><i data-status="failed"></i>failed</span>
+          </div>
+        </div>
+        <div id="hier-root"></div>
+      </div>
+    </section>
+  </main>
+
+</div>
+
+<aside class="panel-host" id="panel-host" hidden aria-label="Agent detail"></aside>
+
+<div class="modal-root" id="modal-root" hidden></div>
+<div class="toasts" id="toasts" aria-live="polite"></div>
+
+<div class="boot-error" id="boot-error" hidden>
+  <div class="boot-error-card">
+    <h1>Control Room could not start</h1>
+    <p id="boot-error-msg"></p>
+    <p class="boot-error-hint">
+      This page uses native ES modules. Browsers block module loading over
+      <code>file://</code>. Serve the <code>ui/</code> directory over HTTP
+      (the Control Room server does this at <code>http://127.0.0.1:4800/</code>),
+      or run a throwaway static server and open
+      <code>http://127.0.0.1:&lt;port&gt;/ui/index.html?mock=1</code>.
+    </p>
+  </div>
+</div>
+
+<script src="/vendor/xterm/xterm.js"></script>
+<script src="/vendor/xterm-addon-fit/addon-fit.js"></script>
+<script>
+  // Classic-script guard: if the module graph never boots (file:// CORS, syntax
+  // error, 404) show an actionable message instead of a blank page.
+  window.__CR_BOOTED__ = false;
+  window.addEventListener('load', function () {
+    setTimeout(function () {
+      if (window.__CR_BOOTED__) return;
+      var box = document.getElementById('boot-error');
+      var msg = document.getElementById('boot-error-msg');
+      msg.textContent = location.protocol === 'file:'
+        ? 'The application modules did not load (page opened from the filesystem).'
+        : 'The application modules did not load. Check the console for the failing import.';
+      box.hidden = false;
+    }, 600);
+  });
+</script>
+<script type="module" src="app.js"></script>
+
+</body>
+</html>

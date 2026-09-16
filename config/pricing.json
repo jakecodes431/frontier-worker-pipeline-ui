@@ -1,0 +1,32 @@
+{
+  "_note": [
+    "EVERY price below is an EDITABLE ESTIMATE in USD per 1,000,000 tokens. None of it is fetched from a",
+    "vendor; it is only what this file says. Check the current price pages of the models you actually run",
+    "and edit these numbers before you trust any dollar figure in the UI.",
+    "\"estimated\": true is set on every row so the UI keeps labelling the totals as estimates.",
+    "If your frontier sessions run on a subscription rather than per-token API billing, set claudeBilling",
+    "to \"plan\": the dollar figures are then API-equivalent estimates of what the same work would have",
+    "cost, not money actually charged to you.",
+    "Keys starting with _ are comments and are ignored by the server."
+  ],
+  "claudeBilling": "plan",
+  "_claudeBillingNote": "\"plan\" = frontier sessions are covered by a subscription (dollars shown are API-equivalent estimates). \"api\" = you pay per token.",
+  "fableEquivalentModel": "claude-fable-5-1",
+  "_fableEquivalentModelNote": "The frontier model the savings figure compares against: 'what this work would have cost if the frontier model had done it'. Point it at whichever model you would otherwise have used.",
+  "models": {
+    "claude-fable-5-1": { "input": 15.0, "cacheRead": 1.5, "cacheWrite": 18.75, "output": 75.0, "tier": "fable", "estimated": true },
+    "claude-opus-5":    { "input": 5.0,  "cacheRead": 0.5, "cacheWrite": 6.25,  "output": 25.0, "tier": "opus", "estimated": true },
+    "claude-sonnet-5":  { "input": 3.0,  "cacheRead": 0.3, "cacheWrite": 3.75,  "output": 15.0, "tier": "sonnet", "estimated": true },
+    "claude-haiku-4-5-20251001": { "input": 1.0, "cacheRead": 0.1, "cacheWrite": 1.25, "output": 5.0, "tier": "haiku", "estimated": true },
+    "deepseek-flash":   { "input": 0.15, "cacheRead": 0.003, "cacheWrite": 0.15, "output": 0.60, "tier": "deepseek", "estimated": true }
+  },
+  "aliases": {
+    "fable": "claude-fable-5-1",
+    "opus": "claude-opus-5",
+    "sonnet": "claude-sonnet-5",
+    "haiku": "claude-haiku-4-5-20251001",
+    "deepseek": "deepseek-flash",
+    "deepseek-v4.1-flash": "deepseek-flash"
+  },
+  "_aliasesNote": "Short names accepted anywhere a model is given, and used to fold the model ids that appear in CLI transcripts onto one row above. Add your own."
+}

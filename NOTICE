@@ -1,0 +1,99 @@
+Frontier + Worker Pipeline & UI
+Built by Quartzi (https://quartzi.ai)
+Copyright (c) 2026 Quartzi Inc. and contributors
+
+This product includes third-party material. The project itself is licensed
+under the MIT License (see LICENSE); the items below carry their own terms,
+which are not superseded by it.
+
+================================================================================
+1. Bundled: ported "superpowers" skills
+================================================================================
+
+Files:   .claude/skills/superpowers/  (index written for this repo; the ports below carry the upstream licence)
+         .claude/skills/superpowers-*/
+
+These skills are a port of the skills published in:
+
+    obra/superpowers  —  https://github.com/obra/superpowers
+
+License: MIT
+Copyright (c) 2025 Jesse Vincent
+
+A verbatim copy of the MIT license text accompanies each ported skill folder as
+`.claude/skills/superpowers-*/LICENSE`. Those copies must be kept with the
+files; do not remove them.
+
+Changes made in this port: the skills are vendored as native project skills
+rather than installed as a plugin, folder and skill names were rewritten from
+the upstream `superpowers:<name>` form to `superpowers-<name>`, cross-references
+between the skills were updated to match, and the map file
+`.claude/skills/superpowers/SKILL.md` was written for this repository. The
+substance of the skills is upstream work.
+
+================================================================================
+2. Derived: "grafana-dashboards" skill
+================================================================================
+
+Files:   .claude/skills/grafana-dashboards/SKILL.md
+         .claude/skills/grafana-dashboards/reference.md
+
+This skill is original prose written for this repository. Its factual content —
+the 24-column grid constants, panel-type guidance, threshold and color
+semantics, unit families and number-formatting rules — was distilled from the
+documentation and source of:
+
+    grafana/grafana  —  https://github.com/grafana/grafana
+    License: GNU Affero General Public License v3.0 (AGPL-3.0-only)
+             https://github.com/grafana/grafana/blob/main/LICENSE
+
+Grafana documentation sources referenced in the skill live in that same
+repository under `docs/sources/`; constants are cited by their source path (for
+example `public/app/core/constants.ts`) so every value can be checked against
+upstream.
+
+What was derived: original prose describing publicly documented values and
+guidance (grid constants, panel-type selection, threshold and colour semantics,
+unit formatting, and light-theme token values), with upstream file paths cited
+so a reader can check them against the source. Grafana itself is AGPL-3.0; no
+Grafana source file is copied into this repository, and the skill is a
+description of documented behaviour rather than a derivative of its code.
+of Grafana. It describes observable facts and design guidance and cites where
+they come from. If you copy Grafana's own code or documentation text into this
+project, you take on the obligations of AGPL-3.0 for that material; this notice
+does not grant you any Grafana rights.
+
+"Grafana" is a trademark of Raintank, Inc. dba Grafana Labs. This project is
+not affiliated with, endorsed by, or sponsored by Grafana Labs.
+
+================================================================================
+3. Runtime dependencies (installed by npm, not vendored in this repository)
+================================================================================
+
+Installed by `npm install` and, in the case of the xterm packages, served to
+the browser from `node_modules/` at `/vendor/...` by the control room server.
+Their license files ship inside their own packages.
+
+    @lydell/node-pty      MIT   https://github.com/lydell/node-pty
+                                (fork of microsoft/node-pty, MIT,
+                                 Copyright (c) 2016 Daniel Imms,
+                                 Copyright (c) 2018 Microsoft Corporation)
+    @xterm/xterm          MIT   https://github.com/xtermjs/xterm.js
+                                (Copyright (c) 2017-2019 The xterm.js authors,
+                                 Copyright (c) 2014-2016 SourceLair Private
+                                 Company, Copyright (c) 2012-2013 Christopher
+                                 Jeffrey)
+    @xterm/addon-fit      MIT   https://github.com/xtermjs/xterm.js
+    ws                    MIT   https://github.com/websockets/ws
+                                (Copyright (c) 2011 Einar Otto Stangvik and
+                                 contributors)
+
+================================================================================
+4. Agent CLIs
+================================================================================
+
+This tool spawns agent command-line tools that you install separately (for
+example a Claude Code CLI, or the DeepSeek Harness). It does not bundle,
+redistribute or modify them, and they remain governed by their own licenses and
+terms of service. Model and provider names are used only to identify the tools
+this control room can drive.

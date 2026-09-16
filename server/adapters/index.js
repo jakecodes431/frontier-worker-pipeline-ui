@@ -1,0 +1,161 @@
+/**
+ * Runtime adapters. Each adapter turns an agent record into { command, args, env }
+ * from config/runtimes.json, and knows how to read usage / chat / status for
+ * its runtime. Add a runtime by adding a config entry and a small adapter here.
+ */
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { config, expandHome, expandValue, protocolTemplate, CR_BIN, BRIEFS_DIR } from '../config.js';
+import { readClaudeTranscript, claudeTranscriptPath, findDshSession, readDshSession } from '../usage.js';
+
+function fill(template, vars) {
+  return template.replace(/\{(\w+)\}/g, (whole, k) => (k in vars ? (vars[k] ?? '') : whole));
+}
+
+/**
+ * Turn an argv template from config/runtimes.json into real argv.
+ * A standalone "{placeholder}" that has no value is dropped together with the
+ * option flag right in front of it, so an unset model or effort falls back to
+ * the CLI's own default instead of emitting a dangling flag.
+ */
+function buildArgs(templates, vars) {
+  const out = [];
+  for (const t of templates || []) {
+    const lone = /^\{(\w+)\}$/.exec(t);
+    if (lone) {
+      const v = vars[lone[1]];
+      if (v === undefined || v === null || v === '') {
+        if (out.length && /^-/.test(out[out.length - 1])) out.pop();
+        continue;
+      }
+      out.push(String(v));
+      continue;
+    }
+    const filled = fill(t, vars);
+    if (filled !== '') out.push(filled);
+  }
+  return out;
+}
+
+function baseEnv(agent, port) {
+  const env = { ...process.env };
+  // The control room may itself have been started from inside a Claude Code session. A child `claude`
+  // that inherits those markers treats itself as a nested child and turns transcript saving off,
+  // which would blind usage and chat. Strip them and force persistence.
+  for (const k of Object.keys(env)) if (/^(CLAUDE_CODE_|CLAUDECODE)/i.test(k)) delete env[k];
+  env.CLAUDE_CODE_FORCE_SESSION_PERSISTENCE = '1';
+  env.CR_AGENT_ID = agent.id;
+  env.CR_URL = `http://127.0.0.1:${port}`;
+  env.CR_BIN = CR_BIN;
+  env.CR_PARENT_ID = agent.parentId || '';
+  return env;
+}
+
+function protocolFor(agent) {
+  return fill(protocolTemplate, { id: agent.id, role: agent.role, parentId: agent.parentId || 'none (top level)', crBin: CR_BIN });
+}
+
+/** Write the full brief (protocol + task + brief text) to a file and return { prompt, briefPath }. */
+export function stageBrief(agent, brief) {
+  const full = `${protocolFor(agent)}# Task\n\n${agent.task}\n\n${brief || ''}`.trim() + '\n';
+  const briefPath = path.join(BRIEFS_DIR, `${agent.id}.md`);
+  fs.writeFileSync(briefPath, full, 'utf8');
+  const fwd = briefPath.replace(/\\/g, '/');
+  const prompt = full.length <= (config.briefArgvLimit || 6000)
+    ? full
+    : `Read the file ${fwd} now and carry out the task it describes exactly. It is your complete brief and includes the control room protocol you must follow.`;
+  return { prompt, briefPath };
+}
+
+export const adapters = {
+  claude: {
+    oneShot: false,
+    build(agent, port, { resume = false } = {}) {
+      const rt = config.runtimes.claude;
+      const d = rt.defaults || {};
+      const vars = {
+        model: agent.model || d.model,
+        effort: agent.effort || d.effort,
+        permissionMode: agent.permissionMode || d.permissionMode,
+        sessionId: agent.sessionId,
+        name: agent.name,
+        prompt: agent.prompt,
+      };
+      const args = buildArgs(resume ? rt.resumeArgs : rt.args, vars);
+      return { command: rt.command, args, env: baseEnv(agent, port) };
+    },
+    transcript(agent) { return claudeTranscriptPath(agent.cwd, agent.sessionId); },
+    usage(agent) { return readClaudeTranscript(this.transcript(agent)); },
+    chat(agent) { return readClaudeTranscript(this.transcript(agent), { withMessages: true }).messages; },
+    result(agent) {
+      const msgs = readClaudeTranscript(this.transcript(agent), { withMessages: true }).messages.filter(m => m.role === 'assistant');
+      return msgs.length ? msgs[msgs.length - 1].text : null;
+    },
+  },
+
+  deepseek: {
+    oneShot: true,
+    build(agent, port) {
+      const rt = config.runtimes.deepseek;
+      const vars = { prompt: agent.prompt, model: agent.model || rt.defaults?.model };
+      const args = buildArgs(rt.args, vars);
+      const env = baseEnv(agent, port);
+      const scrub = rt.scrubEnvContaining || [];
+      const keep = new Set((rt.keepEnv || []).map(k => k.toUpperCase()));
+      for (const k of Object.keys(env)) {
+        const up = k.toUpperCase();
+        if (scrub.some(s => up.includes(s)) && !keep.has(up)) delete env[k];
+      }
+      for (const [k, v] of Object.entries(rt.env || {})) env[k] = expandValue(v);
+      return { command: rt.command, args, env };
+    },
+    locate(agent) {
+      if (agent.sessionId) {
+        const dir = expandHome(config.runtimes.deepseek.sessionStore);
+        for (const cand of [`session-${agent.sessionId}.json`, `${agent.sessionId}.json`]) {
+          const f = path.join(dir, cand);
+          if (fs.existsSync(f)) return { file: f, id: agent.sessionId };
+        }
+      }
+      return findDshSession(agent.cwd, agent.startedAt ? Date.parse(agent.startedAt) : null);
+    },
+    usage(agent) {
+      const loc = this.locate(agent);
+      if (!loc) return null;
+      const r = readDshSession(loc.file, agent.model || 'deepseek-flash');
+      r.sessionId = loc.id;
+      return r;
+    },
+    chat(agent, scrollback) {
+      // Headless dsh prints the final answer on stdout; the scrollback is the best conversation view we have.
+      const text = stripAnsi(scrollback || '');
+      return text ? [{ role: 'assistant', text, ts: agent.startedAt }] : [];
+    },
+    result(agent, scrollback) {
+      const text = stripAnsi(scrollback || '').trim();
+      return text ? text.slice(-8000) : (agent.result || null);
+    },
+  },
+
+  external: {
+    oneShot: false,
+    build() { throw new Error('external agents are not spawned by the control room'); },
+    // sessionId is either a Claude session uuid (transcript under ~/.claude/projects/<cwd-slug>/) or an
+    // absolute path to a transcript .jsonl (e.g. an in-app subagent's output file).
+    transcript(agent) {
+      if (!agent.sessionId) return null;
+      if (/^[A-Za-z]:[\/]|^\//.test(agent.sessionId)) return agent.sessionId;
+      return agent.cwd ? claudeTranscriptPath(agent.cwd, agent.sessionId) : null;
+    },
+    usage(agent) { const t = this.transcript(agent); return t ? readClaudeTranscript(t) : null; },
+    chat(agent) { const t = this.transcript(agent); return t ? readClaudeTranscript(t, { withMessages: true }).messages : []; },
+    result(agent) { const t = this.transcript(agent); if (!t) return null; const m = readClaudeTranscript(t, { withMessages: true }).messages.filter(x => x.role === 'assistant'); return m.length ? m[m.length - 1].text : null; },
+  },
+};
+
+export function stripAnsi(s) {
+  return s.replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g, '').replace(/\x1b\][^\x07]*\x07/g, '').replace(/\r/g, '');
+}
+
+export function homedir() { return os.homedir(); }

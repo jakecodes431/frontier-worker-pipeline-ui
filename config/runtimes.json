@@ -1,0 +1,89 @@
+{
+  "_readme": [
+    "Runtime + server configuration. Values are portable on purpose:",
+    "  ${VAR} and ${VAR:-fallback} are expanded from the environment at startup (see .env.example),",
+    "  a leading ~ is expanded to your home directory,",
+    "  {placeholder} is filled in per agent by the server (model, effort, sessionId, name, prompt, ...).",
+    "A {placeholder} with no value is dropped together with the option flag in front of it, so leaving",
+    "a default unset simply means the CLI's own default is used.",
+    "Keys starting with _ are comments and are ignored by the server."
+  ],
+  "port": 4800,
+  "host": "127.0.0.1",
+  "dataDir": "./data",
+  "runtimes": {
+    "claude": {
+      "label": "Claude Code CLI",
+      "command": "claude",
+      "args": [
+        "--no-chrome",
+        "--model",
+        "{model}",
+        "--effort",
+        "{effort}",
+        "--permission-mode",
+        "{permissionMode}",
+        "--session-id",
+        "{sessionId}",
+        "--name",
+        "{name}",
+        "{prompt}"
+      ],
+      "resumeArgs": [
+        "--no-chrome",
+        "--resume",
+        "{sessionId}",
+        "--model",
+        "{model}",
+        "--effort",
+        "{effort}",
+        "--permission-mode",
+        "{permissionMode}"
+      ],
+      "_note": "Needs the `claude` CLI on PATH and already signed in (run `claude` once in a terminal). The first launch in a new folder shows Claude Code's trust prompt; answer it in the agent's Terminal tab - the control room does not auto-accept it.",
+      "defaults": {
+        "permissionMode": "acceptEdits"
+      },
+      "_defaultsNote": "model and effort are deliberately unset, so every agent uses the CLI's own default model. Pin them here if you want to: \"model\" takes an alias or a full model name, \"effort\" takes low|medium|high|xhigh|max. Run `claude --help` to see what your CLI version accepts.",
+      "transcriptRoot": "${CLAUDE_CONFIG_DIR:-~/.claude}/projects",
+      "idleAfterSilenceMs": 20000
+    },
+    "deepseek": {
+      "label": "DeepSeek Harness (headless)",
+      "command": "node",
+      "args": [
+        "${DSH_REPO}/apps/cli/lib/bin.js",
+        "--profile",
+        "headless",
+        "{prompt}"
+      ],
+      "_note": "DSH_REPO points at your DeepSeek Harness checkout and defaults to ~/deepseek-harness. Override it with the DSH_REPO environment variable, or replace this whole runtime with any other CLI that takes the prompt as its last argument.",
+      "env": {
+        "DSH_HOME": "${DSH_HOME:-~/.dsh}"
+      },
+      "scrubEnvContaining": [
+        "KEY",
+        "TOKEN",
+        "SECRET"
+      ],
+      "keepEnv": [
+        "DEEPSEEK_API_KEY"
+      ],
+      "_envNote": "Worker processes inherit the control room's environment minus every variable whose name contains KEY, TOKEN or SECRET, except the names listed in keepEnv. Add a name there only if that worker really needs the credential.",
+      "defaults": {
+        "model": "deepseek-flash",
+        "effort": "n/a",
+        "permissionMode": "workspace-write"
+      },
+      "sessionStore": "${DSH_HOME:-~/.dsh}/storages/session_projcache/sessions",
+      "oneShot": true
+    },
+    "external": {
+      "label": "External session (not spawned by the control room)",
+      "defaults": {}
+    }
+  },
+  "briefArgvLimit": 6000,
+  "worktreeDir": ".worktrees",
+  "worktreeBranchPrefix": "cr/"
+}
