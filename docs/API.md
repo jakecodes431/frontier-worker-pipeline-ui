@@ -1,4 +1,4 @@
-# Control room API contract (v0.1)
+# Control room API contract (v1.0)
 
 Local only. Non-loopback bind addresses and cross-origin HTTP/WebSocket requests
 are refused. This is still a single-user tool without authentication.
