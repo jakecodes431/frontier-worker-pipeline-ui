@@ -29,6 +29,17 @@
         "{name}",
         "{prompt}"
       ],
+      "scrubEnvContaining": [
+        "KEY",
+        "TOKEN",
+        "SECRET"
+      ],
+      "keepEnv": [
+        "ANTHROPIC_API_KEY",
+        "ANTHROPIC_AUTH_TOKEN",
+        "CLAUDE_CODE_OAUTH_TOKEN"
+      ],
+      "_envNote": "The Claude CLI inherits the control room's environment minus every variable whose name contains KEY, TOKEN or SECRET, except the names in keepEnv (the CLI's own authentication). Add a name there only if the agent really needs that credential (e.g. GITHUB_TOKEN for gh).",
       "resumeArgs": [
         "--no-chrome",
         "--resume",
@@ -102,6 +113,16 @@
         "{reasoningConfig}",
         "{prompt}"
       ],
+      "scrubEnvContaining": [
+        "KEY",
+        "TOKEN",
+        "SECRET"
+      ],
+      "keepEnv": [
+        "OPENAI_API_KEY",
+        "CODEX_API_KEY"
+      ],
+      "_envNote": "The Codex CLI inherits the control room's environment minus every variable whose name contains KEY, TOKEN or SECRET, except the names in keepEnv (the CLI's own authentication). Add a name there only if the agent really needs that credential (e.g. GITHUB_TOKEN for gh).",
       "resumeArgs": [
         "resume",
         "{sessionId}",

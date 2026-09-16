@@ -103,8 +103,9 @@ DSH_REPO=/path/to/deepseek-harness npm start
 the prompt as its last argument. With no harness installed, the rest of the
 control room works normally — use `--runtime claude` or `external` agents.
 
-DeepSeek workers also need `DEEPSEEK_API_KEY` in the environment. It is the one
-credential-looking variable the spawner keeps (see `keepEnv`); the control room
+DeepSeek workers also need `DEEPSEEK_API_KEY` in the environment. It is kept by
+the DeepSeek runtime's `keepEnv` — alongside each other runtime's own
+authentication variables (see `keepEnv`); the control room
 never reads or logs its value.
 
 ---

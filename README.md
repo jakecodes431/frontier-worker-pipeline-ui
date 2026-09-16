@@ -356,7 +356,7 @@ Each runtime entry:
 | `resumeArgs` | Optional. Used by **Restart** when the session can be resumed by id. |
 | `defaults` | `model`, `effort`, `permissionMode` when the caller does not pass them. |
 | `env` | Extra environment for this runtime (a leading `~` is expanded). |
-| `scrubEnvContaining`, `keepEnv` | Credential hygiene, opt-in per runtime: delete inherited variables whose *name* contains any of these substrings (e.g. `KEY`, `TOKEN`, `SECRET`) except the ones explicitly kept. Only runtimes that set these keys apply them — in the default config, the `deepseek` worker; a runtime that does not set them passes the environment through. The control room never reads the values it keeps — it only passes them through. |
+| `scrubEnvContaining`, `keepEnv` | Credential hygiene: delete inherited variables whose *name* contains any of these substrings (e.g. `KEY`, `TOKEN`, `SECRET`) except the ones explicitly kept. The shipped config applies this to all three runtimes — `claude`, `codex` and `deepseek` — each with a `keepEnv` naming that CLI's own authentication variables; a runtime that does not set these keys passes the environment through. The control room never reads the values it keeps — it only passes them through. |
 | `transcriptRoot` / `sessionStore` | Where that CLI writes its session transcripts, so usage and chat can be read back. |
 | `idleAfterSilenceMs` | How long a silent-but-finished session waits before it is shown as `idle` rather than `running`. |
 | `oneShot` | True for workers that run one task and exit. |
@@ -710,7 +710,8 @@ HTTP/WebSocket checks reduce browser exposure; they do not authenticate users.
   isolates changed paths, not processes — it is not a security boundary.
 - The control room does not handle provider credentials and never reads the
   values of the variables it passes on. Where a runtime asks for it
-  (`scrubEnvContaining` / `keepEnv`), it deletes credential-looking variables
+  (`scrubEnvContaining` / `keepEnv` — the shipped config asks for all three
+  managed runtimes), it deletes credential-looking variables
   from that runtime's environment before spawning; a runtime that does not ask
   inherits them.
 

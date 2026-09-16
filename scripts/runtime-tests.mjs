@@ -92,6 +92,21 @@ try {
     assert.throws(() => adapters.codex.build({ ...agent, permissionMode: 'acceptEdits' }, 4800), /permissionMode/);
     assert.throws(() => adapters.codex.build({ ...agent, effort: 'evil"' }, 4800), /effort/);
   });
+  test('shipped defaults scrub credential-looking env from claude and codex', () => {
+    process.env.FOO_TOKEN = 'planted'; process.env.BAR_SECRET = 'planted'; process.env.BAZ_API_KEY = 'planted';
+    process.env.ANTHROPIC_API_KEY = 'keep-me'; process.env.OPENAI_API_KEY = 'keep-me'; process.env.FIXTURE_PLAIN = 'kept';
+    const claudeEnv = adapters.claude.build({ ...agent, runtime: 'claude' }, 4801).env;
+    const codexEnv = adapters.codex.build({ ...agent, runtime: 'codex' }, 4801).env;
+    assert.deepEqual(config.runtimes.claude.scrubEnvContaining, ['KEY', 'TOKEN', 'SECRET']);
+    assert.deepEqual(config.runtimes.codex.scrubEnvContaining, ['KEY', 'TOKEN', 'SECRET']);
+    for (const env of [claudeEnv, codexEnv]) {
+      assert.equal(env.FOO_TOKEN, undefined); assert.equal(env.BAR_SECRET, undefined); assert.equal(env.BAZ_API_KEY, undefined);
+      assert.equal(env.FIXTURE_PLAIN, 'kept');
+    }
+    assert.equal(claudeEnv.ANTHROPIC_API_KEY, 'keep-me'); assert.equal(codexEnv.OPENAI_API_KEY, 'keep-me');
+    delete process.env.FOO_TOKEN; delete process.env.BAR_SECRET; delete process.env.BAZ_API_KEY;
+    delete process.env.ANTHROPIC_API_KEY; delete process.env.OPENAI_API_KEY; delete process.env.FIXTURE_PLAIN;
+  });
   test('every runtime honors env policy; nested-session markers never leak', () => {
     process.env.CODEX_THREAD_ID = 'inherited'; process.env.CODEX_SESSION_ID = 'inherited'; process.env.CLAUDECODE = '1';
     process.env.CODEX_APP_TOOLS_PIPE_PATH = 'parent-ipc'; process.env.CODEX_PERMISSION_PROFILE = 'parent-permissions';
