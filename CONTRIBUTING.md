@@ -11,7 +11,7 @@ npm start          # http://127.0.0.1:4800
 npm run dev        # same, with node --watch
 ```
 
-Node >= 22 is required (the server uses `node:sqlite` and global `fetch`). You
+Node >= 22.13 is required (`node:sqlite` without a flag, and global `fetch`). You
 need `git` on your `PATH`, and at least one agent CLI configured in
 `config/runtimes.json` if you want to spawn anything real.
 
@@ -31,9 +31,13 @@ CR_PORT=4899 CR_DATA_DIR=/tmp/cr-scratch npm start
 npm run check
 ```
 
-That is `node --check` on the entry points, then `scripts/smoke.mjs`, which is
-the real gate. Before it boots anything it parses every shipped `.js`/`.mjs`
-file, refuses hard-coded home directories in the source, checks that the config
+That runs `scripts/smoke.mjs` first, then the focused suites in
+`scripts/*-tests.mjs` (runtime adapters, UI helpers, limits, lifecycle, history
+import, budget, usage connection, pricing and pricing history, directory
+picker, message delivery, queued delivery, agent stop). The smoke test is the
+broad gate; the suites are narrow and fast. Before the smoke test boots
+anything it parses every shipped `.js`/`.mjs` file, refuses hard-coded home
+directories in the source, checks that the config
 loader really expands `${VAR}`, `${VAR:-fallback}` and `~`, checks that an unset
 default drops its option flag instead of emitting a dangling one, and runs the
 pure UI modules (formatters, tree ordering, thread merging) in Node.
@@ -132,6 +136,7 @@ is developer scaffolding — if you touch it, keep its shapes in step with
 
 - One topic per PR; a short description of what changes behaviourally.
 - `npm run check` passes.
+- User-facing changes get a line under the unreleased heading in `CHANGELOG.md`.
 - No absolute paths from your machine, no personal or company identifiers, and
   no credentials in code, config or fixtures.
 - Third-party material keeps its license notice, and anything new gets an entry

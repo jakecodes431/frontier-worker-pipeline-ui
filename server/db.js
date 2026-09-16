@@ -10,7 +10,7 @@ try {
 } catch (err) {
   console.error(
     `\nControl Room could not load node:sqlite (running Node ${process.versions.node}).\n` +
-    'node:sqlite ships with Node 22 and later. Install Node 22+ and run `npm start` again.\n' +
+    'node:sqlite ships unflagged with Node 22.13 and later. Install Node 22.13+ and run `npm start` again.\n' +
     `Original error: ${err && err.message ? err.message : err}\n`,
   );
   process.exit(1);
