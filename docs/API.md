@@ -286,11 +286,13 @@ both cases.
 ```json
 {
   "spend": { "today": 1.23, "week": 4.5, "month": 9.0 },
-  "spendWindows": { "today": "2026-09-15", "weekFrom": "2026-09-09", "monthFrom": "2026-09-01", "basis": "local calendar days" },
-  "currentRun": { "costUsd": 0.4, "startedAt": "ISO|null", "basis": "what the number sums" },
+  "spendWindows": { "today": "2026-09-15", "weekFrom": "2026-09-09", "monthFrom": "2026-09-01",
+    "basis": "local calendar days; each day is the token delta banked for that local day, priced at read time from the current price sheet" },
+  "currentRun": { "costUsd": 0.4, "startedAt": "ISO|null", "pricingKnown": true,
+    "basis": "total priced estimate of every agent that has not reached a terminal status" },
   "byTier": { "cto": {…usage}, "orchestrator": {…usage}, "deepseek": {…usage}, "other": {…usage} },
   "byTierAgents": { "cto": 1, "orchestrator": 1, "deepseek": 4, "other": 0 },
-  "counts": { "total": 6, "active": 3, "running": 3, "queued": 0, "idle": 0, "paused": 0, "stopping": 0, "blocked": 1, "done": 5, "failed": 0, "stopped": 0, "unknown": 0 },
+  "counts": { "total": 6, "active": 3, "running": 3, "queued": 0, "idle": 0, "paused": 0, "stopping": 0, "blocked": 1, "done": 2, "failed": 0, "stopped": 0, "unknown": 0 },
   "tokens": { "input": 0, "cacheRead": 0, "cacheWrite": 0, "output": 0, "total": 0 },
   "limits": { "claude": null, "codex": null, "deepseek": null },
   "savings": {
@@ -298,9 +300,13 @@ both cases.
     "fableEquivalentUsd": 8.2,
     "savedUsd": 8.1,
     "estimated": true,
-    "basis": "worker usage re-priced at the configured frontier model"
+    "basis": "DeepSeek token usage re-priced at <fableEquivalentModel> (editable estimated price sheet in config/pricing.json). Both dollar figures are estimates, not provider invoices; the avoided work was never run."
   },
-  "pricing": { "…": "the parsed config/pricing.json" }
+  "pricing": { "_note": "…", "claudeBilling": "…", "fableEquivalentModel": "claude-fable-5-1", "models": {…}, "aliases": {…}, "markers": {…} },
+  "pricingComplete": true,
+  "unpricedModels": [],
+  "unpricedMarkers": [],
+  "generatedAt": "2026-09-16T18:41:33.173Z"
 }
 ```
 
@@ -317,25 +323,44 @@ both cases.
   restart to apply a rate change.
 - `spendWindows` names the days those figures cover, in the operator's **local**
   timezone — a UTC day key put an evening's work into "tomorrow" and made
-  "spend today" read `$0.00` while money was being spent.
-- `currentRun` sums the cost of every agent not in a terminal status
-  (`done`, `failed`, `stopped`), and `startedAt` is the earliest of their start
-  times. `basis` says so in words, because the number is otherwise unreadable.
+  "spend today" read `$0.00` while money was being spent. Each window is the
+  **token delta banked for that local day** and is priced at read time from the
+  current price sheet, so a rate change re-prices history instead of freezing
+  the dollars of the day the tokens were spent.
+- `currentRun` is the **total priced estimate of every agent that has not
+  reached a terminal status** (`done`, `failed`, `stopped`), and `startedAt` is
+  the earliest of their start times. `basis` says so in words, because the
+  number is otherwise unreadable.
+- `currentRun.pricingKnown` is `false` when any non-terminal agent has a model
+  with no row in the price sheet, so a run estimate that silently omits a rate
+  is flagged rather than presented as complete.
 - `counts` has one key per status and always sums to `counts.total`; a status
   the server does not recognise lands in `unknown` rather than disappearing.
   `counts.active` counts `running`.
 - `byTier` / `byTierAgents` bucket by `deepseek` runtime, then `cto` and
   `orchestrator` roles; anything else lands in `other`, so an agent with an
-  unusual role is still counted somewhere.
+  unusual role is still counted somewhere. Each `{…usage}` entry carries
+  `inputTokens`, `cacheReadTokens`, `cacheWriteTokens`, `outputTokens`,
+  `totalTokens`, `costUsd`, `fableEquivalentUsd` and `pricingKnown`.
 - `limits.codex` may contain the latest account-level limit observation from a
   local Codex rollout. Absent observations are null; Claude and DeepSeek limits
   remain unknown. This is not a live provider quota query.
 - A model with no row in `config/pricing.json` is **unpriced, not free**: its
   tokens count, but its cost reads `$0.00` because there is no price, not because
-  it was verified as zero.
-- All dollar figures are estimates against the configured price sheet. No
-  invoice or billing API is queried. See the note under *Agent*.
-- `savings.estimated` is always `true`. See the note under *Agent*.
+  it was verified as zero. `unpricedModels` names those real models, and any one
+  of them makes `pricingComplete` `false`; `pricingComplete` is `true` only when
+  no real model is missing a row.
+- `unpricedMarkers` lists ids that are deliberately never priced because they
+  are not models at all (Claude Code writes `<synthetic>` on assistant entries
+  that are API error notices). Markers never set `pricingKnown` to `false` and
+  never make `pricingComplete` `false`; each carries its own `id`, `reason` and
+  `totalTokens`.
+- `savings.basis` is a template: `<fableEquivalentModel>` is substituted with
+  `pricing.fableEquivalentModel` from `config/pricing.json`. `savings.estimated`
+  is always `true`. All dollar figures are estimates against the configured
+  price sheet, and no invoice or billing API is queried. See the note under
+  *Agent*.
+- `generatedAt` is the ISO timestamp of the read.
 
 `PublicConfig` (from `/api/state` and `/api/config`) is deliberately small:
 `{ runtimes: { <name>: { label, defaults } }, pricing, crBin, defaultCwd,
