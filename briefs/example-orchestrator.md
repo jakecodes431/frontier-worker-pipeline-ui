@@ -10,6 +10,9 @@
 >   --task "Ship tag support in notes-app: create, assign, and filter by tag" \
 >   --brief-file briefs/example-orchestrator.md
 > ```
+>
+> Swap `--runtime claude` for `--runtime codex` to run the same orchestrator on
+> the other native runtime; the brief below is written to be runtime-neutral.
 
 You are the orchestrator for one feature in `notes-app`. You plan it, split it into
 bounded worker tasks, spawn workers, review their diffs, integrate their branches, and
@@ -119,6 +122,11 @@ when you are done. Never go silent for a long stretch.
 Use `node $CR_BIN status blocked --note "<question, the options, your recommendation>"`
 only for a real fork — two defensible designs with different consequences, a fact only a
 human has, or a scope or cost change. Keep the rest of the work moving while you wait.
+
+If you are close to your provider limit, say so in a report rather than going quiet. A
+handoff to the other native runtime is a manual decision for whoever spawned you; it
+moves the recovered task, this brief and your reports, not your native conversation or
+quota.
 
 ## Definition of done
 

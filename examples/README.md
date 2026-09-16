@@ -9,24 +9,30 @@ substitute your own (`~/code/notes-app`, `C:/code/notes-app`, ...).
 
 ## 0. Before you start
 
-- The target repo is a git repo, committed and clean. Agents get worktrees of it, and a
-  dirty checkout makes the first `git worktree add` fail.
-- The CLI you are going to spawn is installed and logged in (`claude` for orchestrators,
-  the DeepSeek Harness for workers — see `config/runtimes.json`).
+- The target repo is a git repo with the base you want committed. Agents get worktrees of
+  it, created from a committed ref, so uncommitted changes in your checkout are **not**
+  copied into them. A dirty checkout does **not** block `git worktree add` — it just means
+  the work in progress is not the agent's starting point. Commit the base first.
+- The native CLI you are going to spawn is installed and logged in (`claude` or `codex`
+  for orchestrators — see the vendor docs linked in the README). Workers use the DeepSeek
+  Harness, which is optional and configured in `config/runtimes.json`.
 - You have a gate command for that repo that exits 0 today. If it is red before the run,
   nobody can tell you anything useful about the run.
 
 ## 1. Start the control room
 
 ```
-npm install
+npm ci
+npm test
 npm start
 ```
 
 Open http://127.0.0.1:4800 and leave it open — that is where you watch the terminals.
-Check the server from another shell:
+From another shell, confirm the server is actually up (the body must carry
+`"ok":true`) and then check it through the CLI:
 
 ```
+curl http://127.0.0.1:4800/api/health
 node bin/cr.js health
 ```
 
@@ -46,6 +52,9 @@ node bin/cr.js spawn --name "tags" --role orchestrator --runtime claude \
 ```
 
 (PowerShell: one line, or backticks instead of `\`.)
+
+`--runtime codex` runs the same orchestrator on the other native runtime; the brief does
+not change.
 
 It prints the new agent id and, on stderr, the worktree it created —
 `/path/to/notes-app/.worktrees/tags-<stamp>` on branch `cr/tags-<stamp>`. The shared
@@ -110,8 +119,21 @@ This types into the agent's real terminal. If a human has taken control of that 
 in the UI, the send is refused and queued to the agent's inbox instead (`cr` exits 3 and
 says so) — take control, type, return control.
 
-`stop <id>` and `restart <id>` do what they say; a restarted Claude session resumes by
-session id, and the hierarchy survives a server restart because it is all in SQLite.
+`stop <id>` and `restart <id>` do what they say; a restarted native session resumes by
+session id, and the hierarchy survives a server restart because it is all in SQLite. A
+graceful shutdown stops the managed processes; after a hard crash their terminals are gone
+and need an explicit stop or restart.
+
+If the orchestrator nears its provider limit, it reports that and you decide. Handing the
+role to the other native runtime is manual and explicit — stop the source first, then:
+
+```
+node bin/cr.js handoff <id> --runtime codex
+```
+
+The successor starts in the same worktree with the same role and parent and gets the
+recovered task, brief and reports as context. It does **not** get the native conversation
+or any quota.
 
 ## 7. Land the work
 

@@ -49,21 +49,17 @@ page it was served from, so everything keeps working on the new port.
 
 ---
 
-## The Claude CLI is not logged in
+## The Claude or Codex CLI is not logged in
 
-A spawned Claude agent goes `running` and then sits there, and its **Terminal**
-tab shows a login prompt or `Invalid API key · Please run /login`.
+A spawned native agent goes `running` and then sits there, and its **Terminal**
+tab shows a login prompt or an invalid-credentials message.
 
-The control room spawns the same `claude` binary you use by hand and inherits
-its credentials; it never logs in for you. Fix it in a plain terminal:
-
-```
-claude
-/login
-```
-
-Then **Restart** the agent from its drawer (Extra → Restart). Claude sessions
-resume by session id, so the conversation is not lost.
+The control room spawns the same `claude` / `codex` binary you use by hand and
+inherits its credentials; it never logs in for you. Fix it in a plain terminal
+with that CLI's own login flow (for Claude Code, `claude` then `/login`; for
+Codex, follow its [docs](https://developers.openai.com/codex/cli/)). Then
+**Restart** the agent from its drawer (Extra → Restart). Native sessions that
+support resume-by-id pick up where they left off.
 
 ---
 
@@ -123,10 +119,12 @@ contains a `.git` **file** pointing back at `<repo>/.git/worktrees/<name>`. A
 worker sandboxed to its own directory can read that pointer and then fail to
 write outside it.
 
-- Give the harness write access to the parent repo directory, not only the
-  worktree (for the DeepSeek Harness, the workspace/sandbox root setting).
-- Or run the worker with `--cwd` inside a plain clone instead of `--repo`, and
-  integrate by pushing that clone's branch.
+Do not widen the worker's sandbox to the parent repo just so it can commit. The
+worker's job ends at the edit, and integration is the frontier orchestrator's
+job: have the worker report what it changed, then let the **orchestrator** read
+the diff (Diff tab, or `git -C <worktree> diff`) and commit from its own
+terminal, which already has the repo. That keeps the write boundary where it
+belongs instead of granting broader access.
 
 Check what the worker can actually see from its own cwd:
 
@@ -134,6 +132,9 @@ Check what the worker can actually see from its own cwd:
 git -C <worktree> status
 git -C <worktree> rev-parse --git-dir
 ```
+
+A git worktree isolates **changed paths**, not processes. It is not a security
+sandbox, and it is not a reason to grant a worker broader filesystem access.
 
 ---
 
@@ -162,11 +163,39 @@ the task — read the tail of the terminal, not just the status.
 
 ## Restarting the control room "loses" agents
 
-It does not. Agent records live in SQLite (`data/control-room.sqlite`) and come
-straight back. What is lost is the PTY: processes the server spawned are
-orphaned when it exits, so on the next boot they are marked `stopped` with a
-note. Claude agents restart with `--resume <session-id>` and pick up where they
-were; DeepSeek workers are one-shot and are re-run from their brief.
+It does not lose the records. Agent state and history live in SQLite
+(`data/control-room.sqlite`) and come straight back. What can be lost is the
+terminal attachment:
+
+- On a **graceful** shutdown the server stops the managed processes it started.
+- On a **hard crash** (power loss, `SIGKILL`) their ptys are gone and there is
+  **no auto-reattach**. On the next start those agents are marked `stopped` with a
+  note and need an explicit **stop** or **restart**.
+- A native session that supports resume-by-id restarts into its conversation; a
+  one-shot DeepSeek worker is re-run from its brief.
+- An **external registration** has no process to lose — it stays a record plus a
+  transcript read.
+
+---
+
+## Handoff was refused, or I am near a provider limit
+
+`cr handoff <id> --runtime codex` (or `claude`) is the manual way to continue a
+frontier role on the other native runtime when a provider limit is close. It is
+**not** automatic and does **not** transfer quota between providers.
+
+- If it fails with `409`, the source still has a **live terminal**. Run
+  `cr stop <id>` first, then hand off. The successor starts in the same
+  cwd/worktree with the same role and parent.
+- The successor's context is the recovered **task, brief and reports** — not the
+  vendor's native conversation. Expect a new CLI conversation that has read the
+  same brief; do not expect the old chat history or the old plan's quota to carry
+  over.
+- The old agent stays in the tree with its history, now carrying `successorId`;
+  the successor carries `continuedFromId`. The source's children and report
+  routing are re-parented to the successor.
+- Quota itself is unknown to the control room unless a transcript carries real
+  usage data. The UI cannot tell you how much of a plan remains.
 
 ---
 
@@ -187,28 +216,31 @@ The banner tracks the WebSocket. If it stays up while the server is running:
 
 ## Spend numbers look wrong
 
-- **Claude dollars are estimates.** Sessions on a Claude plan are not billed per
-  token; those figures are token counts priced at `config/pricing.json` for
-  comparison, and every panel that shows one says so. DeepSeek figures are real
-  metered API spend.
-- **Spend today** is banked on the local calendar day the usage was *measured*,
-  as the increment since the previous reading — not the whole session total
-  attributed to the day it started.
-- Two agent records that point at the same session id count that session twice.
-  That is a registration mistake, not a pricing one: remove the duplicate.
-- Prices are hand-entered. If a model is missing from `config/pricing.json` its
-  cost reads `$0.00` while its tokens still count.
+- All displayed costs are price-sheet estimates from recorded tokens, not
+  invoices. Subscription sessions need not incur a per-token bill at all.
+- Missing model prices produce `pricingKnown: false` and `unpricedModels`.
+  Tokens still count; an aggregate numeric zero is not proof of free use.
+  Add a verified rate in `config/pricing.json` to price an unsupported model.
+- Codex limits, when available, come from the last local rollout observation
+  of account-level `rate_limits`. They may be stale. Missing limits are unknown,
+  not zero remaining and not unlimited. Claude and DeepSeek limits are unknown.
+- Spend is banked on the local day the increment was measured, not entirely on
+  the day the session started. Registering the same session twice can count it
+  twice; remove accidental duplicate registrations.
 
 ---
 
-## `npm run check` fails
+## `npm test` fails
 
-`npm run check` parses every JavaScript file, boots a server on a free port the
-OS hands out (set `CR_SMOKE_PORT` to pin one) with a scratch database and a
-scratch `CR_CONFIG_DIR`, and exercises the API contract. Common causes:
+`npm test` runs the offline gate: it parses every shipped JavaScript file, boots
+a server on a free port the OS hands out (set `CR_SMOKE_PORT` to pin one) with a
+scratch database and a scratch `CR_CONFIG_DIR`, and exercises the API contract.
+It does **not** spawn a real Claude Code or Codex process, so a green run is not
+proof that your provider account, plan or quota works — only that the control
+room's own contract holds. Common causes:
 
 - **the smoke server exited** — usually a pinned `CR_SMOKE_PORT` that is busy;
-  the `server boots on a scratch database` assertion names the exit code.
+  the boot assertion names the exit code.
 - **`node --check` failure** — a syntax error; the file and line are printed.
 - **a home-directory path in the source** — the portability check refuses any
   absolute path that points inside somebody's home directory, in the Windows,

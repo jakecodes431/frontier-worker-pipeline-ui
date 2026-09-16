@@ -13,6 +13,10 @@ node bin/cr.js spawn --name "tags-api" --role worker --runtime deepseek \
 
 (PowerShell: put it on one line, or use a backtick instead of `\` at line ends.)
 
+For a native frontier session, use `--runtime claude` or `--runtime codex`; the
+`deepseek` worker tier is optional. Frontier sessions are interactive and are
+where orchestration and review belong.
+
 Files in this folder are examples you can copy. Real briefs are usually written on
 the fly by whoever is spawning the agent — an orchestrator writes its workers' briefs
 into a scratch file and passes `--brief-file`.
@@ -52,8 +56,10 @@ the **fan-out rules** it must obey when it spawns workers.
 ## Why briefs have to be this strict
 
 - A worker runs in its **own git worktree** (`<repo>/.worktrees/<name>-<stamp>` on branch
-  `cr/<name>-<stamp>`). It cannot see other agents' work in progress, so "coordinate with
-  the other agent" is not a thing it can do.
+  `cr/<name>-<stamp>`). It is created from a committed base, so uncommitted changes in
+  the shared checkout are not copied into it. It cannot see other agents' work in
+  progress, so "coordinate with the other agent" is not a thing it can do.
+- A worktree isolates changed paths, not processes: it is **not** a security sandbox.
 - A DeepSeek worker is **one-shot**: it gets the prompt, works, and exits. It cannot ask
   you a question. Every decision it would otherwise have to make must already be in the
   brief, or it will invent one.
@@ -78,7 +84,7 @@ it, remember the agent's cwd is the worktree, not the repo root.
 
 ## Status and reporting, in one paragraph
 
-An orchestrator (an interactive `claude` runtime) ends its own life with
+An orchestrator (a native `claude` or `codex` session) ends its own life with
 `node $CR_BIN status done --note "..."`, and uses `blocked` only for a genuine fork that
 needs a human decision, with the exact question in the note. A one-shot worker does
 **not** need to set a status: the server marks it `done` on exit code 0 and `failed`
@@ -86,6 +92,12 @@ otherwise, captures its last message as the result (`cr result <id>`), and posts
 line to its parent's inbox automatically. A worker should still send one
 `node $CR_BIN report "..."` line at the end, because that is what the orchestrator reads
 first.
+
+If a frontier session is close to its provider limit, it should report that instead of
+going quiet. Handing the role to the other native runtime
+(`cr handoff <id> --runtime codex|claude`) is a manual action taken by whoever spawned
+it; the successor receives the recovered task, this brief and the report log as context,
+not the vendor's conversation or any quota.
 
 ## House rules for brief files
 

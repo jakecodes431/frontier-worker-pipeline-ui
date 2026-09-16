@@ -27,7 +27,7 @@ const USAGE = `Launch an orchestrator agent through the control room API.
   node scripts/launch-orchestrator.mjs --name "<name>" --task "<one line>" \\
     [--brief-file <path>] [--repo <git repo>] [--branch <name>] [--base <ref>] \\
     [--cwd <dir>] [--model <model>] [--effort <level>] [--permission-mode <mode>] \\
-    [--runtime claude|deepseek] [--role orchestrator|cto|worker] [--parent <agentId>] \\
+    [--runtime claude|codex|deepseek] [--role orchestrator|cto|worker] [--parent <agentId>] \\
     [--no-auto-start] [--force]
 
 --repo puts the agent in a fresh git worktree of that repository (recommended);
