@@ -16,7 +16,7 @@ The database is the built-in `node:sqlite` module, which arrived in Node 22.
 There is no fallback and no native dependency to install: upgrade Node.
 
 ```
-node --version      # must be v22 or newer
+node --version      # must be v22.13 or newer (node:sqlite without a flag)
 ```
 
 `@lydell/node-pty` also ships prebuilt binaries per Node ABI, so switching Node
