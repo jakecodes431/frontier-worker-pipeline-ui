@@ -132,7 +132,7 @@ two ways in, and every view has its own empty state.
 **Install and run**
 
 ```sh
-git clone https://github.com/jakecodes431/frontier-worker-pipeline-ui.git
+git clone https://github.com/jakescalesAI/frontier-worker-pipeline-ui.git
 cd frontier-worker-pipeline-ui
 npm ci          # reproducible install from package-lock.json
 npm test        # offline checks; no CLI is spawned and no tokens are spent
@@ -244,7 +244,7 @@ from here.
 ```
 Set up this local control room, then walk me through what it does. Read the repo's README and docs/API.md when you need specifics; do not invent commands or a session id.
 
-1. Clone https://github.com/jakecodes431/frontier-worker-pipeline-ui into a sensible folder here. If a clone already exists, do not overwrite it — read its README and check `git status` first, then continue in place.
+1. Clone https://github.com/jakescalesAI/frontier-worker-pipeline-ui into a sensible folder here. If a clone already exists, do not overwrite it — read its README and check `git status` first, then continue in place.
 2. Check Node is 22.13 or newer and that git is on PATH. If Node is older, tell me how to upgrade on my OS and stop.
 3. Install with `npm ci`, then run `npm test`. If either fails, read the real error and tell me what is missing rather than guessing.
 4. Start the server with `npm start` in the background — it runs in the foreground. Wait for it, confirm `curl http://127.0.0.1:4800/api/health` returns a body with `"ok":true`, then open http://127.0.0.1:4800.
@@ -261,7 +261,7 @@ paste:
 ```
 Set up this local control room, then walk me through what it does. Read the repo's README and docs/API.md when you need specifics; do not invent commands or a session id.
 
-1. Clone https://github.com/jakecodes431/frontier-worker-pipeline-ui into a sensible folder here. If a clone already exists, do not overwrite it — read its README and check `git status` first, then continue in place.
+1. Clone https://github.com/jakescalesAI/frontier-worker-pipeline-ui into a sensible folder here. If a clone already exists, do not overwrite it — read its README and check `git status` first, then continue in place.
 2. Check Node is 22.13 or newer and that git is on PATH. If Node is older, tell me how to upgrade on my OS and stop.
 3. Install with `npm ci`, then run `npm test`. If either fails, read the real error and tell me what is missing rather than guessing.
 4. Start the server with `npm start` in the background — it runs in the foreground. Wait for it, confirm `curl http://127.0.0.1:4800/api/health` returns a body with `"ok":true`, then open http://127.0.0.1:4800.
@@ -283,7 +283,7 @@ This is a local, desktop-only app: it binds 127.0.0.1 with no authentication (do
 ```
 Set up this local control room, then walk me through what it does. You are a setup assistant here, not a control-room runtime. Read the repo's README and docs/API.md when you need specifics; do not invent commands or a session id.
 
-1. Clone https://github.com/jakecodes431/frontier-worker-pipeline-ui into a sensible folder here. If a clone already exists, do not overwrite it — read its README and check `git status` first, then continue in place.
+1. Clone https://github.com/jakescalesAI/frontier-worker-pipeline-ui into a sensible folder here. If a clone already exists, do not overwrite it — read its README and check `git status` first, then continue in place.
 2. Check Node is 22.13 or newer and that git is on PATH. If Node is older, tell me how to upgrade on my OS and stop.
 3. Install with `npm ci`, then run `npm test`. If either fails, read the real error and tell me what is missing rather than guessing.
 4. Start the server with `npm start` in the background — it runs in the foreground. Wait for it, confirm `curl http://127.0.0.1:4800/api/health` returns a body with `"ok":true`, then open http://127.0.0.1:4800.

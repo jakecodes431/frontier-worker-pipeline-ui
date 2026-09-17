@@ -36,7 +36,7 @@ and there are no accounts, sessions or authorization.
 
 Please do not open a public issue for a security problem. Use GitHub's private
 vulnerability reporting on
-<https://github.com/jakecodes431/frontier-worker-pipeline-ui/security/advisories/new>.
+<https://github.com/jakescalesAI/frontier-worker-pipeline-ui/security/advisories/new>.
 Include the version (`git describe` or the `version` in `package.json`), your
 OS, Node version, and steps to reproduce. You should hear back within 14 days.
 
