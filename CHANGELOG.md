@@ -40,4 +40,4 @@ optional DeepSeek workers) as real CLI processes in real pseudo-terminals.
 ### Security
 - Binds `127.0.0.1` only, refuses non-loopback binds and cross-origin requests, and has no authentication. Do not expose the port. See `SECURITY.md`.
 
-[1.0.0]: https://github.com/jakecodes431/frontier-worker-pipeline-ui/releases/tag/v1.0.0
+[1.0.0]: https://github.com/jakescalesAI/frontier-worker-pipeline-ui/releases/tag/v1.0.0
