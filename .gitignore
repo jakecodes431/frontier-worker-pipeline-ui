@@ -18,3 +18,7 @@ config/*.local.json
 .DS_Store
 Thumbs.db
 *.log
+
+# Supabase CLI link state (supabase/.temp). This repo has no Supabase project;
+# the folder appears when the CLI is run from a checkout and is machine-local.
+supabase/
